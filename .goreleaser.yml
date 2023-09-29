@@ -3,7 +3,7 @@ release:
   draft: true
   github:
     owner: salrashid123
-    name: gcp-adc-pkcs
+    name: gcp-adc-tpm
   name_template: '{{.Tag}}'
   extra_files:
 
