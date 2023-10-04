@@ -6,7 +6,7 @@ While not running on a GCP platform like GCE, Cloud Run, GCF or GKE, `Service Ac
 
 You can see why here in the protocol itself: [Using OAuth 2.0 for Server to Server Applications](https://developers.google.com/identity/protocols/oauth2/service-account#authorizingrequests).  Basically service account authentication involves locally signing a JWT using a registered private key and then exchanging the JWT for an `access_token`.
 
-What this repo offers is a way to generate the JWT while the RSA key is embedded on a `PKCS-11` aware device like an `HSM`, `TPM` or even a `Yubikey`.
+What this repo offers is a way to generate the JWT while the RSA key is embedded on a TPM and then use it to issue GCP `access_tokens`
 
 (you can also import an external RSA to a device to the same effect but its more secure to have an unexportable key that'll never leave hardware).
 
