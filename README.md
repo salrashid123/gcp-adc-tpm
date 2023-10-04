@@ -103,6 +103,14 @@ You can also invoke this binary as a full TokenSource as well:  see
 * `java`: [https://github.com/salrashid123/gcp_process_credentials_java](https://github.com/salrashid123/gcp_process_credentials_java)
 * `node`: [https://github.com/salrashid123/gcp_process_credentials_node](https://github.com/salrashid123/gcp_process_credentials_node)
 
+for `gcloud` cli, you could apply the token directly using [--access-token-file](https://cloud.google.com/sdk/gcloud/reference#--access-token-file):
+
+```bash
+gcp-adc-tpm --persistentHandle=0x81008000 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" | jq -r '.access_token' > token.txt
+
+gcloud storage ls --access-token-file=token.txt
+``` 
+
 ---
 
 
