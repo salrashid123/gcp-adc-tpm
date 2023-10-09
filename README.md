@@ -75,7 +75,7 @@ On the machine with the TPM, specify the PROJECT_ID and the default persistent h
 ```bash
 CGO_ENABLED=0 go build -o gcp-adc-tpm adc.go
 
-gcp-adc-tpm --persistentHandle=0x81008000 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
+./gcp-adc-tpm --persistentHandle=0x81008000 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
 
 ## output is json Token specs
 {
