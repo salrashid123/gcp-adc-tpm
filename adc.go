@@ -100,11 +100,11 @@ func main() {
 	data.Add("assertion", tokenString)
 
 	hreq, err := http.NewRequest("POST", "https://accounts.google.com/o/oauth2/token", bytes.NewBufferString(data.Encode()))
-	hreq.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
 	if err != nil {
 		fmt.Printf("Error: Unable to generate token Request, %v\n", err)
 		os.Exit(1)
 	}
+	hreq.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
 	resp, err := client.Do(hreq)
 	if err != nil {
 		fmt.Printf("Error: unable to POST token request, %v\n", err)
