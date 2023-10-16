@@ -99,7 +99,7 @@ func main() {
 	data.Add("assertion_type", "http://oauth.net/grant_type/jwt/1.0/bearer")
 	data.Add("assertion", tokenString)
 
-	hreq, err := http.NewRequest("POST", "https://accounts.google.com/o/oauth2/token", bytes.NewBufferString(data.Encode()))
+	hreq, err := http.NewRequest("POST", "https://oauth2.googleapis.com/token", bytes.NewBufferString(data.Encode()))
 	if err != nil {
 		fmt.Printf("Error: Unable to generate token Request, %v\n", err)
 		os.Exit(1)
