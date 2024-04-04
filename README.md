@@ -8,15 +8,23 @@ You can see why here in the protocol itself: [Using OAuth 2.0 for Server to Serv
 
 What this repo offers is a way to generate the JWT while the RSA key is embedded on a TPM and then use it to issue GCP `access_tokens`
 
-(you can also import an external RSA to a device to the same effect but its more secure to have an unexportable key that'll never leave hardware).
+There are several ways to embed a GCP Service Account into a TPM.  
 
-The setup below shows how to use RSA keys on the device  to mint an x509 using `openssl` and then [upload that key to GCP](https://cloud.google.com/iam/docs/keys-upload#uploading) for binding to a service account.  Note that GCP service accounts can have [at most 10 keys](https://cloud.google.com/iam/quotas) associated with it.  This repo uses up one of those slots.  Sometimes you can "import" an RSA into an HSM but thats not covered here.
+1. download a Google ServiceAccount's json file and embed the private part to the TPM or
+2. Generate a Key ON THE TPM and then import the public part to GCP. or
+3. remote seal the service accounts RSA Private key remotely, encrypt it with the remote TPM's Endorsement Key and load it
 
-I'm not going into the background of what [PKCS-11](https://en.wikipedia.org/wiki/PKCS_11) is but will state that its pretty particular in its setup.
+These are described here: [oauth2 TPM TokenSource](https://github.com/salrashid123/oauth2/blob/master/README.md#usage-tpmtokensource)
 
-For reference, some of the providers and enablement technology stack this repo covers
+This specific demo here will use option (2) but ultimately, you just need a reference handle to the TPM which all three options can provide.
 
-and other references/reps for TPMs
+To import an x509, we need to first create the RSA private key on the TPM, then make it issue an `x509` certificate which we will [upload that key to GCP](https://cloud.google.com/iam/docs/keys-upload#uploading) for binding to a service account.  Note that GCP service accounts can have [at most 10 keys](https://cloud.google.com/iam/quotas) associated with it.  This repo uses up one of those slots.  Sometimes you can "import" an RSA into an HSM but thats not covered here.
+
+> *NOTE* While this repo is a CLI,  you can acquire an embedded service account's token for use with a library as an [oauth2 TPM TokenSource](https://github.com/salrashid123/oauth2/blob/master/README.md#usage-tpmtokensource)
+
+---
+
+### References
 
 * [Trusted Platform Module (TPM) recipes with tpm2_tools and go-tpm](https://github.com/salrashid123/tpm2)
 * [GCP golang TPMTokenSource](https://github.com/salrashid123/oauth2/blob/master/README.md#usage-tpmtokensource)
@@ -26,11 +34,11 @@ and other references/reps for TPMs
 * [golang-jwt for Trusted Platform Module (TPM)](https://github.com/salrashid123/golang-jwt-tpm)
 * [TPM based TLS using Attested Keys](https://github.com/salrashid123/tls_ak)
 
-
 Note, you can also embed AWS credentials to hardware:
 
 * [AWS SDK Credentials and Request Signing using Trusted Platform Modules (TPM), HSM, PKCS-11 and Vault](https://github.com/salrashid123/aws_hmac)
 
+---
 
 >> NOTE: this repo is not supported by google
 

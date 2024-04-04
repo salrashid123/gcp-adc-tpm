@@ -5,7 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -99,7 +99,7 @@ func main() {
 	data.Add("assertion_type", "http://oauth.net/grant_type/jwt/1.0/bearer")
 	data.Add("assertion", tokenString)
 
-	hreq, err := http.NewRequest("POST", "https://oauth2.googleapis.com/token", bytes.NewBufferString(data.Encode()))
+	hreq, err := http.NewRequest(http.MethodPost, "https://oauth2.googleapis.com/token", bytes.NewBufferString(data.Encode()))
 	if err != nil {
 		fmt.Printf("Error: Unable to generate token Request, %v\n", err)
 		os.Exit(1)
@@ -113,7 +113,7 @@ func main() {
 
 	if resp.StatusCode != http.StatusOK {
 		fmt.Printf("Error: Token Request error:, %v\n", err)
-		f, err := ioutil.ReadAll(resp.Body)
+		f, err := io.ReadAll(resp.Body)
 		if err != nil {
 			fmt.Printf("Error Reading response body, %v\n", err)
 			os.Exit(1)
@@ -122,7 +122,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	f, err := ioutil.ReadAll(resp.Body)
+	f, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("Error: unable to parse token response, %v\n", err)
 		os.Exit(1)
