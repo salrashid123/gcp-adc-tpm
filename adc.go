@@ -71,8 +71,6 @@ func main() {
 			}
 			pcrList = append(pcrList, j)
 		}
-
-		fmt.Printf(">>>%v\n", pcrList)
 		s, err := client.NewPCRSession(rwc, tpm2.PCRSelection{tpm2.AlgSHA256, pcrList})
 		if err != nil {
 			fmt.Printf("Unable to initialize tpmJWT: %v", err)
