@@ -1,3 +1,7 @@
+// Creates creates GCP access tokens where the service account key
+// is saved on a Trusted Platform Module (TPM).
+//
+//	see https://github.com/salrashid123/gce_metadata_server
 package main
 
 import (
@@ -9,9 +13,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
-	jwt "github.com/golang-jwt/jwt/v4"
+	jwt "github.com/golang-jwt/jwt/v5"
 
 	"github.com/google/go-tpm-tools/client"
 	"github.com/google/go-tpm/legacy/tpm2"
@@ -31,6 +37,8 @@ var (
 	tpmPath          = flag.String("tpm-path", "/dev/tpm0", "Path to the TPM device (character device or a Unix socket).")
 	persistentHandle = flag.Uint("persistentHandle", 0x81008000, "Handle value")
 	svcAccountEmail  = flag.String("svcAccountEmail", "", "Service Account Email")
+	pcrs             = flag.String("pcrs", "", "PCR Bound value (increasing order, comma separated)")
+	scopes           = flag.String("scopes", "https://www.googleapis.com/auth/cloud-platform", "comma separated scopes")
 )
 
 type oauthJWT struct {
@@ -49,7 +57,32 @@ func main() {
 		os.Exit(1)
 	}
 	defer rwc.Close()
-	k, err := client.LoadCachedKey(rwc, tpmutil.Handle(*persistentHandle), nil)
+	var k *client.Key
+
+	if *pcrs != "" {
+		strpcrs := strings.Split(*pcrs, ",")
+		var pcrList = []int{}
+
+		for _, i := range strpcrs {
+			j, err := strconv.Atoi(i)
+			if err != nil {
+				fmt.Printf("ERROR:  could convert pcr value: %v", err)
+				os.Exit(1)
+			}
+			pcrList = append(pcrList, j)
+		}
+
+		fmt.Printf(">>>%v\n", pcrList)
+		s, err := client.NewPCRSession(rwc, tpm2.PCRSelection{tpm2.AlgSHA256, pcrList})
+		if err != nil {
+			fmt.Printf("Unable to initialize tpmJWT: %v", err)
+			os.Exit(1)
+		}
+		k, err = client.LoadCachedKey(rwc, tpmutil.Handle(*persistentHandle), s)
+	} else {
+		k, err = client.LoadCachedKey(rwc, tpmutil.Handle(*persistentHandle), client.NullSession{})
+	}
+
 	if err != nil {
 		fmt.Printf("ERROR:  could not initialize Key: %v", err)
 		os.Exit(1)
@@ -67,7 +100,7 @@ func main() {
 			IssuedAt:  jwt.NewNumericDate(iat),
 			ExpiresAt: jwt.NewNumericDate(exp),
 		},
-		"https://www.googleapis.com/auth/cloud-platform",
+		strings.Replace(*scopes, ",", " ", -1),
 	}
 
 	tpmjwt.SigningMethodTPMRS256.Override()

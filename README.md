@@ -52,10 +52,10 @@ On the TPM device, generate a self-signed  RSA key.
 The following generates an RSA on the device, then a self-signed x509 cert.  It then creates a _persistent handle_ to the key on NV area of the TPM (so that it survives system reboots)
 
 ```bash
-git clone https://github.com/salrashid123/go_tpm_https_embed.git
-cd go_tpm_https_embed/
-go run src/selfsigned/main.go 
-more x509cert.pem 
+git clone https://github.com/salrashid123/signer.git
+cd signer/util/
+go run  certgen/certgen.go  --filename /tmp/server.crt --persistentHandle=0x81008003 --sni server.domain.com --cn=server.domain.com 
+more /tmp/server.crt 
 ```
 
 Note that instead of a self-signed cert, the same repo above has a function that will issue a CSR which you can issue an x509 against.  
@@ -83,7 +83,7 @@ On the machine with the TPM, specify the PROJECT_ID and the default persistent h
 ```bash
 CGO_ENABLED=0 go build -o gcp-adc-tpm adc.go
 
-./gcp-adc-tpm --persistentHandle=0x81008000 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
+./gcp-adc-tpm --persistentHandle=0x81008003 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" 
 
 ## output is json Token specs
 {
@@ -114,14 +114,43 @@ You can also invoke this binary as a full TokenSource as well:  see
 for `gcloud` cli, you could apply the token directly using [--access-token-file](https://cloud.google.com/sdk/gcloud/reference#--access-token-file):
 
 ```bash
-gcp-adc-tpm --persistentHandle=0x81008000 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" | jq -r '.access_token' > token.txt
+gcp-adc-tpm --persistentHandle=0x81008000 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"  | jq -r '.access_token' > token.txt
 
 gcloud storage ls --access-token-file=token.txt
 ``` 
 
 ---
 
+### PCR and Password Policies
 
+if you want to create a service account key which has a PCR policy attached to it:
+
+```bash
+# tpm2_flushcontext -s
+# tpm2_flushcontext -t
+
+ tpm2_startauthsession -S session.dat
+ tpm2_policypcr -S session.dat -l sha256:23  -L policy.dat
+ tpm2_flushcontext session.dat
+ tpm2_createprimary -C o -c primary2.ctx
+ tpm2_create -G rsa2048:rsassa:null -g sha256 -u rsa2.pub -r rsa2.priv -C primary2.ctx  -L policy.dat
+ tpm2_load -C primary2.ctx -u rsa2.pub -r rsa2.priv -c rsa2.ctx
+ tpm2_evictcontrol -C o -c rsa2.ctx 0x81008004
+
+git clone https://github.com/salrashid123/signer.git
+cd signer/util/
+go run  tpm_selfsigned_policy/main.go  --x509certFile /tmp/server.crt --persistentHandle=0x81008004 
+more /tmp/server.crt 
+```
+
+
+```bash
+gcp-adc-tpm --persistentHandle=0x81008004 \
+   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" --pcrs=23  | jq -r '.access_token' > token.txt
+```
+
+
+---
 
 Finally, you may want to restrict access to the TPM device by applying [tpm-udev.rules](https://github.com/salrashid123/tpm2#non-root-access-to-in-kernel-resource-manager-devtpmrm0-usint-tpm2-tss)
 
