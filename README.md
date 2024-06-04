@@ -16,9 +16,7 @@ There are several ways to embed a GCP Service Account into a TPM.
 
 These are described here: [oauth2 TPM TokenSource](https://github.com/salrashid123/oauth2/blob/master/README.md#usage-tpmtokensource)
 
-This specific demo here will use option (2) but ultimately, you just need a reference handle to the TPM which all three options can provide.
-
-To import an x509, we need to first create the RSA private key on the TPM, then make it issue an `x509` certificate which we will [upload that key to GCP](https://cloud.google.com/iam/docs/keys-upload#uploading) for binding to a service account.  Note that GCP service accounts can have [at most 10 keys](https://cloud.google.com/iam/quotas) associated with it.  This repo uses up one of those slots.  Sometimes you can "import" an RSA into an HSM but thats not covered here.
+This specific demo here will use option (1) which is the easiest but ultimately, you just need a reference handle to the TPM which all three options can provide.
 
 > *NOTE* While this repo is a CLI,  you can acquire an embedded service account's token for use with a library as an [oauth2 TPM TokenSource](https://github.com/salrashid123/oauth2/blob/master/README.md#usage-tpmtokensource)
 
@@ -34,7 +32,7 @@ To import an x509, we need to first create the RSA private key on the TPM, then 
 * [golang-jwt for Trusted Platform Module (TPM)](https://github.com/salrashid123/golang-jwt-tpm)
 * [TPM based TLS using Attested Keys](https://github.com/salrashid123/tls_ak)
 
-Note, you can also embed AWS credentials to hardware:
+as an side, you can also embed AWS credentials to hardware:
 
 * [AWS SDK Credentials and Request Signing using Trusted Platform Modules (TPM), HSM, PKCS-11 and Vault](https://github.com/salrashid123/aws_hmac)
 
@@ -46,54 +44,100 @@ Note, you can also embed AWS credentials to hardware:
 
 ### Setup
 
+since we're importing an external RSA key _into_ a TPM, we'll need a service account json file.
 
-On the TPM device, generate a self-signed  RSA key.
-
-The following generates an RSA on the device, then a self-signed x509 cert.  It then creates a _persistent handle_ to the key on NV area of the TPM (so that it survives system reboots)
-
-```bash
-git clone https://github.com/salrashid123/signer.git
-cd signer/util/
-go run  certgen/certgen.go  --filename /tmp/server.crt --persistentHandle=0x81008003 --sni server.domain.com --cn=server.domain.com 
-more /tmp/server.crt 
-```
-
-Note that instead of a self-signed cert, the same repo above has a function that will issue a CSR which you can issue an x509 against.  
-
-Also, if you're already using a persistent handle, you can pin another one using the args provided (or evict an existing one `tpm2_evictcontrol -c 0x81008000`)
-
-
-Copy the cert over to any machine where you're logged into upload a svc account's key:
-
+On your laptop, run
 
 ```bash
 export PROJECT_ID=`gcloud config get-value core/project`
-
-gcloud iam service-accounts create tpm-sa
-
-gcloud iam service-accounts keys upload x509cert.pem  --iam-account tpm-sa@$PROJECT_ID.iam.gserviceaccount.com
-gcloud iam service-accounts keys list --iam-account=tpm-sa@$PROJECT_ID.iam.gserviceaccount.com
+gcloud iam service-accounts create tpm-sa --display-name "TPM Service Account"
+export SERVICE_ACCOUNT_EMAIL=tpm-sa@$PROJECT_ID.iam.gserviceaccount.com
+gcloud iam service-accounts keys create tpm-svc-account.json --iam-account=$SERVICE_ACCOUNT_EMAIL
 ```
+
+copy the `tpm-svc-account.json` to the system hosting the TPM.
+
+
+On the TPM device, prepare the key and then use `tpm2_tools` to create a primary and import the service account into it.
+
+```bash
+## prepare they key
+## extract just the private key from the json keyfile
+
+cat tpm-svc-account.json | jq -r '.private_key' > /tmp/f.json
+openssl rsa -in /tmp/f.json -out /tmp/key_rsa.pem 
+
+## create the primary
+### the specific primary here happens to be the h2 template described later on but you are free to define any template and policy
+
+printf '\x00\x00' > unique.dat
+tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
+
+# import
+
+tpm2_import -C primary.ctx -G rsa2048:rsassa:null -g sha256 -i /tmp/key_rsa.pem -u key.pub -r key.prv
+tpm2_load -C primary.ctx -u key.pub -r key.prv -c key.ctx 
+```
+
+Delete the svc account json and the extracted formats; theyr'e no longer needed 
+
+You can either evict (save) the key to a `persistent_handle` or if you have [tpm2-tss-engine](https://github.com/tpm2-software/tpm2-tss-engine/blob/master/man/tpm2tss-genkey.1.md) installed, save the key to a PEM file
+
+- `Evict`
+
+```bash
+tpm2_evictcontrol -C o -c key.ctx 0x81010002
+```
+
+- `PEM`
+
+```bash
+tpm2tss-genkey -u key.pub -r key.prv private.pem
+```
+
+The TPM encrypted service account private key looks like:
+
+```bash
+-----BEGIN TSS2 PRIVATE KEY-----
+MIICNQYGZ4EFCgEDoAMBAf8CBEAAAAEEggEaARgAAQALAAQAQAAAABAAFAALCAAA
+AQABAQDqKVruwZ6amTB9OFXwOqNkl7Zaxh0jD1AXbnD9uvnk0z18tGOHxzsP6lsm
+LJ8ywnMkomdbDP78dZlHEC3sn/7ustRUTwHb9UV/gc875gMJ0qsrbRajsH1J7tQB
+S4ezEf8MKoBi9ogUx7g21z7cytiK46nr08J3yyZHvXVuCklncXBD8TM9ZlHVdDeM
+ICMOzXg6d0fL0UvujGPSIEYnqbmY4DlpI0RudMAsOtActbo7Dq7xuiSBcW9slxxS
+e18mO6/3IJANKVlHkynpjTEkzzchKR5brCoteukcLhSPTlSNmkvzBOXbDTyRhrrs
+8HEyufQGc4MGLjStpTFNsOHy1xqnBIIBAAD+ACCa/b/fswSisyrTKwiDXPQh34iP
+zBY1tFOd6vnC0/ve1wAQPG4ZuRWMOklDUbmDx4Lw8WG9dGQFNOFaQKCQhLUphFTs
+bT12jDRmW87F7IPlJYbziyj6+4YVS0Ni1EoDJPlXpoveSE9AWONnqkqzTn9mlURI
+ZGiTieMzKxfKxy7g/iwW8p0gkDuq/wR1zL6NScfD6HsEzGdpLHb3gVe8Y2VAwjb2
+RLNfC7oAZv2rmq5OhKYTzcpCvO7rfL7X6lez4+ql9a04Jz3ui+QBGPSKO7KN0nir
+qbW/+koHwS95LxjewjZ9aThg7tkaqAjlUqAZlayvvFDG1kjIhuDmN/0=
+-----END TSS2 PRIVATE KEY-----
+```
+
+---
+
+### Acquire access_token
 
 At this point, the embedded RSA key on the TPM is authorized for access GCP.
 
-
-On the machine with the TPM, specify the PROJECT_ID and the default persistent handle.  You should see an access token
+On the machine with the TPM, specify the `PROJECT_ID` and the default persistent handle.  You should see an access token
 
 ```bash
 CGO_ENABLED=0 go build -o gcp-adc-tpm adc.go
 
-./gcp-adc-tpm --persistentHandle=0x81008003 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" 
+# with persistentHandle
+./gcp-adc-tpm --persistentHandle=0x81008002 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
 
-## output is json Token specs
+# with keyfile
+./gcp-adc-tpm --keyfilepath=/path/to/private.pem --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
+
+
 {
   "access_token": "ya29.c.c0AY_VpZjqp...redacted",
   "expires_in": 3599,
   "token_type": "Bearer"
 }
 ```
-
-
 
 The json provided there can populate a generic [oauth2.Token](https://pkg.go.dev/golang.org/x/oauth2@v0.12.0#Token) which you can use in any GCP Library.
 
@@ -121,34 +165,106 @@ gcloud storage ls --access-token-file=token.txt
 
 ---
 
-### PCR and Password Policies
+### PCR Policy
 
 if you want to create a service account key which has a PCR policy attached to it:
 
 ```bash
-# tpm2_flushcontext -s
-# tpm2_flushcontext -t
+tpm2_startauthsession -S session.dat
+tpm2_policypcr -S session.dat -l sha256:23  -L policy.dat
+tpm2_flushcontext session.dat
 
- tpm2_startauthsession -S session.dat
- tpm2_policypcr -S session.dat -l sha256:23  -L policy.dat
- tpm2_flushcontext session.dat
- tpm2_createprimary -C o -c primary2.ctx
- tpm2_create -G rsa2048:rsassa:null -g sha256 -u rsa2.pub -r rsa2.priv -C primary2.ctx  -L policy.dat
- tpm2_load -C primary2.ctx -u rsa2.pub -r rsa2.priv -c rsa2.ctx
- tpm2_evictcontrol -C o -c rsa2.ctx 0x81008004
+printf '\x00\x00' > unique.dat
+tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
 
-git clone https://github.com/salrashid123/signer.git
-cd signer/util/
-go run  tpm_selfsigned_policy/main.go  --x509certFile /tmp/server.crt --persistentHandle=0x81008004 
-more /tmp/server.crt 
+tpm2_import -C primary.ctx -G rsa2048:rsassa:null -g sha256 -i /tmp/key_rsa.pem -u key.pub -r key.prv -L policy.dat
+tpm2_load -C primary.ctx -u key.pub -r key.prv -c key.ctx 
+
+tpm2_evictcontrol -C o -c key.ctx 0x81010003
 ```
 
+Then run it and specify the pcr back to construct the policy against:
 
 ```bash
-gcp-adc-tpm --persistentHandle=0x81008004 \
-   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" --pcrs=23  | jq -r '.access_token' > token.txt
+./gcp-adc-tpm --persistentHandle=0x81010003  \
+   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" --pcrs=23 
 ```
 
+to test the negative, you can alter the PCR value.  For me it was
+
+```bash
+$ tpm2_pcrread sha256:23
+  sha256:
+    23: 0xC78009FDF07FC56A11F122370658A353AAA542ED63E44C4BC15FF4CD105AB33C
+
+$ tpm2_pcrextend 23:sha256=0xC78009FDF07FC56A11F122370658A353AAA542ED63E44C4BC15FF4CD105AB33C
+```
+
+So now try to get an access token, you'll see an error:
+
+```bash
+./gcp-adc-tpm --persistentHandle=0x81010003  \
+   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" --pcrs=23 
+
+Error signing tpmjwt: can't Sign: TPM_RC_POLICY_FAIL (session 1): a policy check failedexit status 1
+```
+
+### Password Policy
+
+if you want to create a service account key which has a Password policy attached to it:
+
+```bash
+printf '\x00\x00' > unique.dat
+tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
+
+tpm2_import -C primary.ctx -G rsa2048:rsassa:null -g sha256 -i /tmp/key_rsa.pem -u key.pub -r key.prv -L policy.dat  -p testpwd
+tpm2_load -C primary.ctx -u key.pub -r key.prv -c key.ctx 
+
+tpm2_evictcontrol -C o -c key.ctx 0x81010004
+```
+
+Now run without the password, you'll see an error
+
+```bash
+./gcp-adc-tpm --persistentHandle=0x81010004  \
+   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" 
+
+Error signing tpmjwt: can't Sign: TPM_RC_AUTH_FAIL (session 1): the authorization HMAC check failed and DA counter incrementedexit status 1   
+```
+
+Now run  and specify the password
+
+```bash
+./gcp-adc-tpm --persistentHandle=0x81010004  \
+   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"  --keyPass=testpwd
+```
+
+### Encrypted TPM Sessions
+
+If you want to enable [TPM Encrypted sessions](https://github.com/salrashid123/tpm2/tree/master/tpm_encrypted_session), you should provide the "name" of a trusted key on the TPM for each call.
+
+A trusted key can be the EK Key. You can get the name using `tpm2_tools`:
+
+```bash
+tpm2_createek -c primary.ctx -G rsa -u ek.pub -Q
+tpm2_readpublic -c primary.ctx -o ek.pem -n name.bin -f pem -Q
+xxd -p -c 100 name.bin 
+  000bb50d34f6377bb3c2f41a1b4b6094ed6efcd7032d28054566db0766879dad1ee0
+```
+
+Then use the hex value returned in the `--tpm-session-encrypt-with-name=` argument.
+
+For example:
+
+```bash
+   --tpm-session-encrypt-with-name=000bb50d34f6377bb3c2f41a1b4b6094ed6efcd7032d28054566db0766879dad1ee0
+```
+
+### Using ASN.1 Specification for TPM 2.0 Key Files
+
+The primary we used happens to be the the specified format described in [ASN.1 Specification for TPM 2.0 Key Files](https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html#name-parent)  where the template h-2 is described in pg 43 [TCG EK Credential Profile](https://trustedcomputinggroup.org/wp-content/uploads/TCG_IWG_EKCredentialProfile_v2p4_r2_10feb2021.pdf)
+
+This specific format allows us to easily use openssl and export the key as PEM.  For reference, see  [tpm2 primarykey for (eg TCG EK Credential Profile H-2 profile](https://gist.github.com/salrashid123/9822b151ebb66f4083c5f71fd4cdbe40)
 
 ---
 
