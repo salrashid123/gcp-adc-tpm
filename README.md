@@ -42,6 +42,22 @@ as an side, you can also embed AWS credentials to hardware:
 
 ---
 
+### Configuration Options
+
+You can set the following options on usage:
+
+| Option | Description |
+|:------------|-------------|
+| **`--tpm-path`** | path to the TPM device (default: `/dev/tpm0`) |
+| **`--persistentHandle`** | Persistent Handle for the HMAC key (default: `0x81010002`) |
+| **`--keyfilepath`** | Path to the TPM HMAC credential file (default: ``) |
+| **`--svcAccountEmail`** | (required) Service Account Email |
+| **`--parentPass`** | Passphrase for the owner handle (will use TPM_PARENT_AUTH env var) |
+| **`--keyPass`** | Passphrase for the key handle (will use TPM_KEY_AUTH env var) |
+| **`--pcrs`** | "PCR Bound value (increasing order, comma separated)" |
+| **`--scopes`** |  "comma separated scopes (default `https://www.googleapis.com/auth/cloud-platform`)" |
+| **`--tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session |
+
 ### Setup
 
 since we're importing an external RSA key _into_ a TPM, we'll need a service account json file.
