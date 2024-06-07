@@ -83,6 +83,11 @@ On the TPM device, prepare the key and then use `tpm2_tools` to create a primary
 cat tpm-svc-account.json | jq -r '.private_key' > /tmp/f.json
 openssl rsa -in /tmp/f.json -out /tmp/key_rsa.pem 
 
+## if you want to test using a software TPM instead:
+##  rm -rf /tmp/myvtpm && mkdir /tmp/myvtpm
+##  sudo swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear
+##  export TPM2TOOLS_TCTI="swtpm:port=2321"
+
 ## create the primary
 ### the specific primary here happens to be the h2 template described later on but you are free to define any template and policy
 
@@ -92,7 +97,9 @@ tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedpare
 # import
 
 tpm2_import -C primary.ctx -G rsa2048:rsassa:null -g sha256 -i /tmp/key_rsa.pem -u key.pub -r key.prv
+tpm2_flushcontext  -t
 tpm2_load -C primary.ctx -u key.pub -r key.prv -c key.ctx 
+tpm2_flushcontext  -t
 ```
 
 Delete the svc account json and the extracted formats; theyr'e no longer needed 
@@ -174,7 +181,7 @@ You can also invoke this binary as a full TokenSource as well:  see
 for `gcloud` cli, you could apply the token directly using [--access-token-file](https://cloud.google.com/sdk/gcloud/reference#--access-token-file):
 
 ```bash
-gcp-adc-tpm --persistentHandle=0x81008000 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"  | jq -r '.access_token' > token.txt
+gcp-adc-tpm --persistentHandle=0x81010002 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"  | jq -r '.access_token' > token.txt
 
 gcloud storage ls --access-token-file=token.txt
 ``` 
@@ -194,9 +201,11 @@ printf '\x00\x00' > unique.dat
 tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
 
 tpm2_import -C primary.ctx -G rsa2048:rsassa:null -g sha256 -i /tmp/key_rsa.pem -u key.pub -r key.prv -L policy.dat
+tpm2_flushcontext  -t
 tpm2_load -C primary.ctx -u key.pub -r key.prv -c key.ctx 
 
 tpm2_evictcontrol -C o -c key.ctx 0x81010003
+tpm2_flushcontext  -t
 ```
 
 Then run it and specify the pcr back to construct the policy against:
@@ -233,10 +242,12 @@ if you want to create a service account key which has a Password policy attached
 printf '\x00\x00' > unique.dat
 tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
 
-tpm2_import -C primary.ctx -G rsa2048:rsassa:null -g sha256 -i /tmp/key_rsa.pem -u key.pub -r key.prv -L policy.dat  -p testpwd
+tpm2_import -C primary.ctx -G rsa2048:rsassa:null  -p testpwd -g sha256 -i /tmp/key_rsa.pem -u key.pub -r key.prv 
+tpm2_flushcontext  -t
 tpm2_load -C primary.ctx -u key.pub -r key.prv -c key.ctx 
 
 tpm2_evictcontrol -C o -c key.ctx 0x81010004
+tpm2_flushcontext  -t
 ```
 
 Now run without the password, you'll see an error

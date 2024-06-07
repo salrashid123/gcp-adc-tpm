@@ -246,7 +246,7 @@ func main() {
 		_, _ = flushContextCmd.Execute(rwr)
 	}()
 
-	var sess tpm2.Session
+	var se tpmjwt.Session
 
 	if *pcrs != "" {
 		strpcrs := strings.Split(*pcrs, ",")
@@ -261,41 +261,16 @@ func main() {
 			pcrList = append(pcrList, uint(j))
 		}
 
-		var cleanup func() error
-		sess, cleanup, err = tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR:  could not get PolicySession: %v", err)
-			os.Exit(1)
-		}
-		defer cleanup()
-
-		selection := tpm2.TPMLPCRSelection{
-			PCRSelections: []tpm2.TPMSPCRSelection{
-				{
-					Hash:      tpm2.TPMAlgSHA256,
-					PCRSelect: tpm2.PCClientCompatible.PCRs(pcrList...),
-				},
+		sel := []tpm2.TPMSPCRSelection{
+			{
+				Hash:      tpm2.TPMAlgSHA256,
+				PCRSelect: tpm2.PCClientCompatible.PCRs(pcrList...),
 			},
 		}
+		se, err = tpmjwt.NewPCRSession(rwr, sel)
 
-		expectedDigest, err := getExpectedPCRDigest(rwr, selection, tpm2.TPMAlgSHA256)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR:  could not get PolicySession: %v", err)
-			os.Exit(1)
-		}
-		_, err = tpm2.PolicyPCR{
-			PolicySession: sess.Handle(),
-			Pcrs:          selection,
-			PcrDigest: tpm2.TPM2BDigest{
-				Buffer: expectedDigest,
-			},
-		}.Execute(rwr)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Unable to create policyPCR: %v", err)
-			os.Exit(1)
-		}
-	} else {
-		sess = tpm2.PasswordAuth([]byte(keyPasswordAuth))
+	} else if keyPasswordAuth != "" {
+		se, err = tpmjwt.NewPasswordSession(rwr, []byte(keyPasswordAuth))
 	}
 
 	if err != nil {
@@ -324,11 +299,11 @@ func main() {
 
 	config := &tpmjwt.TPMConfig{
 		TPMDevice: rwc,
-		AuthHandle: &tpm2.AuthHandle{
+		NamedHandle: tpm2.NamedHandle{
 			Handle: svcAccountKey,
 			Name:   svcAccountKeyName,
-			Auth:   sess,
 		},
+		AuthSession:      se,
 		EncryptionHandle: encryptionSessionHandle,
 		EncryptionPub:    encryptionPub,
 	}
