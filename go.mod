@@ -9,7 +9,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/go-tpm v0.9.1-0.20240514145214-58e3e47cd434
 	github.com/google/go-tpm-tools v0.4.4
-	github.com/salrashid123/golang-jwt-tpm v1.8.1-0.20240606202535-4a9cc73e10e7
+	github.com/salrashid123/golang-jwt-tpm v1.8.1
 )
 
 require (
