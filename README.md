@@ -4,7 +4,7 @@ Binary that just returns a Service Accounts `access_token` for use with GCP Cred
 
 While not running on a GCP platform like GCE, Cloud Run, GCF or GKE, `Service Account` authentication usually (with exception of workload federation) requires direct access to its RSA Private key.. 
 
-You can see why here in the protocol itself: [Using OAuth 2.0 for Server to Server Applications](https://developers.google.com/identity/protocols/oauth2/service-account#authorizingrequests).  Basically service account authentication involves locally signing a JWT using a registered private key and then exchanging the JWT for an `access_token`.
+You can see why here in the protocol itself in [AIP-4111: Self-signed JWT with Scopes](https://google.aip.dev/auth/4111).  Basically service account authentication involves locally signing a JWT and using that directly as an  `access_token`.
 
 What this repo offers is a way to generate the JWT while the RSA key is embedded on a TPM and then use it to issue GCP `access_tokens`
 
@@ -109,8 +109,11 @@ You can either evict (save) the key to a `persistent_handle` or if you have [tpm
 - `Evict`
 
 ```bash
+## to load
 tpm2_evictcontrol -C o -c key.ctx 0x81010002
 ```
+
+note, Range for OWNER hierarchy is :`81 00 80 00 – 81 00 FF FF` from [Section 2.3.1 Key Handle Assignments of Registry of Reserved TPM 2.0: Handles and Localities](https://trustedcomputinggroup.org/wp-content/uploads/RegistryOfReservedTPM2HandlesAndLocalities_v1p1_pub.pdf)
 
 - `PEM`
 
@@ -149,7 +152,7 @@ On the machine with the TPM, specify the `PROJECT_ID` and the default persistent
 CGO_ENABLED=0 go build -o gcp-adc-tpm adc.go
 
 # with persistentHandle
-./gcp-adc-tpm --persistentHandle=0x81008002 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
+./gcp-adc-tpm --persistentHandle=0x81010002 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
 
 # with keyfile
 ./gcp-adc-tpm --keyfilepath=/path/to/private.pem --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
@@ -204,14 +207,14 @@ tpm2_import -C primary.ctx -G rsa2048:rsassa:null -g sha256 -i /tmp/key_rsa.pem 
 tpm2_flushcontext  -t
 tpm2_load -C primary.ctx -u key.pub -r key.prv -c key.ctx 
 
-tpm2_evictcontrol -C o -c key.ctx 0x81010003
+tpm2_evictcontrol -C o -c key.ctx 0x81010002
 tpm2_flushcontext  -t
 ```
 
 Then run it and specify the pcr back to construct the policy against:
 
 ```bash
-./gcp-adc-tpm --persistentHandle=0x81010003  \
+./gcp-adc-tpm --persistentHandle=0x81010002  \
    --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" --pcrs=23 
 ```
 
@@ -228,7 +231,7 @@ $ tpm2_pcrextend 23:sha256=0xC78009FDF07FC56A11F122370658A353AAA542ED63E44C4BC15
 So now try to get an access token, you'll see an error:
 
 ```bash
-./gcp-adc-tpm --persistentHandle=0x81010003  \
+./gcp-adc-tpm --persistentHandle=0x81010002  \
    --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" --pcrs=23 
 
 Error signing tpmjwt: can't Sign: TPM_RC_POLICY_FAIL (session 1): a policy check failedexit status 1
@@ -246,14 +249,14 @@ tpm2_import -C primary.ctx -G rsa2048:rsassa:null  -p testpwd -g sha256 -i /tmp/
 tpm2_flushcontext  -t
 tpm2_load -C primary.ctx -u key.pub -r key.prv -c key.ctx 
 
-tpm2_evictcontrol -C o -c key.ctx 0x81010004
+tpm2_evictcontrol -C o -c key.ctx 0x81010002
 tpm2_flushcontext  -t
 ```
 
 Now run without the password, you'll see an error
 
 ```bash
-./gcp-adc-tpm --persistentHandle=0x81010004  \
+./gcp-adc-tpm --persistentHandle=0x81010002  \
    --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" 
 
 Error signing tpmjwt: can't Sign: TPM_RC_AUTH_FAIL (session 1): the authorization HMAC check failed and DA counter incrementedexit status 1   
@@ -262,7 +265,7 @@ Error signing tpmjwt: can't Sign: TPM_RC_AUTH_FAIL (session 1): the authorizatio
 Now run  and specify the password
 
 ```bash
-./gcp-adc-tpm --persistentHandle=0x81010004  \
+./gcp-adc-tpm --persistentHandle=0x81010002  \
    --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"  --keyPass=testpwd
 ```
 
