@@ -56,6 +56,7 @@ You can set the following options on usage:
 | **`--keyPass`** | Passphrase for the key handle (will use TPM_KEY_AUTH env var) |
 | **`--pcrs`** | "PCR Bound value (increasing order, comma separated)" |
 | **`--scopes`** |  "comma separated scopes (default `https://www.googleapis.com/auth/cloud-platform`)" |
+| **`--expireIn`** | "How many seconds the token is valid for" |
 | **`--tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session |
 
 ### Setup
@@ -118,7 +119,7 @@ note, Range for OWNER hierarchy is :`81 00 80 00 – 81 00 FF FF` from [Section 
 - `PEM`
 
 ```bash
-tpm2tss-genkey -u key.pub -r key.prv private.pem
+tpm2_encodeobject -C primary.ctx -u key.pub -r key.prv -o private.pem
 ```
 
 The TPM encrypted service account private key looks like:

@@ -20,7 +20,6 @@ import (
 
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
 	jwt "github.com/golang-jwt/jwt/v5"
-	"golang.org/x/oauth2"
 
 	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2"
@@ -45,6 +44,7 @@ var (
 	parentPass       = flag.String("parentPass", "", "Passphrase for the owner handle (will use TPM_PARENT_AUTH env var)")
 	keyPass          = flag.String("keyPass", "", "Passphrase for the key handle (will use TPM_KEY_AUTH env var)")
 	pcrs             = flag.String("pcrs", "", "PCR Bound value (increasing order, comma separated)")
+	expireIn         = flag.Int("expireIn", 3600, "Token expires in seconds")
 	scopes           = flag.String("scopes", "https://www.googleapis.com/auth/cloud-platform", "comma separated scopes")
 
 	sessionEncryptionName = flag.String("tpm-session-encrypt-with-name", "", "hex encoded TPM object 'name' to use with an encrypted session")
@@ -123,10 +123,32 @@ func openTPM(path string) (io.ReadWriteCloser, error) {
 	}
 }
 
+type Token struct {
+	// AccessToken is the token that authorizes and authenticates
+	// the requests.
+	AccessToken string `json:"access_token"`
+
+	// TokenType is the type of token.
+	// The Type method returns either this or "Bearer", the default.
+	TokenType string `json:"token_type,omitempty"`
+
+	// ExpiresIn is the OAuth2 wire format "expires_in" field,
+	// which specifies how many seconds later the token expires,
+	// relative to an unknown time base approximately around "now".
+	// It is the application's responsibility to populate
+	// `Expiry` from `ExpiresIn` when required.
+	ExpiresIn int64 `json:"expires_in,omitempty"`
+}
+
 func main() {
 
 	flag.Parse()
 	ctx := context.Background()
+
+	if *expireIn > 3600 {
+		fmt.Fprintf(os.Stderr, "Token expiry cannot exceed 3600s")
+		os.Exit(1)
+	}
 
 	rwc, err := openTPM(*tpmPath)
 	if err != nil {
@@ -280,7 +302,7 @@ func main() {
 	// now we're ready to sign
 
 	iat := time.Now()
-	exp := iat.Add(time.Hour)
+	exp := iat.Add(time.Duration(*expireIn) * time.Second)
 
 	claims := &oauthJWT{
 		Scope: strings.Replace(*scopes, ",", " ", -1),
@@ -319,7 +341,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	f := &oauth2.Token{AccessToken: tokenString, TokenType: "Bearer", Expiry: exp}
+	f := &Token{AccessToken: tokenString, TokenType: "Bearer", ExpiresIn: int64(exp.Sub(iat).Seconds())}
 
 	fs, err := json.Marshal(f)
 	if err != nil {

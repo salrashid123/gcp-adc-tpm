@@ -1,4 +1,5 @@
 project_name: gcp-adc-tpm
+version: 2
 release:
   draft: true
   github:
@@ -6,42 +7,36 @@ release:
     name: gcp-adc-tpm
   name_template: '{{.Tag}}'
   extra_files:
-
-scoop:
-  name: gcp-adc-tpm
-  commit_author:
-    name: sal
-    email: salrashid123@gmail.com
-  commit_msg_template: Scoop update for {{ .ProjectName }} version {{ .Tag }}
-  goamd64: v1
 builds:
   - id: gcp-adc-tpm
     goos:
       - linux
+      - darwin
     goarch:
       - amd64
+      - arm64
     goamd64:
       - v1
+    goarm:
+      - 7
     env:
       - CGO_ENABLED=0
-    targets:
-      - linux_amd64_v1
     binary: gcp-adc-tpm
     builder: go
-    gobinary: go
+    tool: go
     command: build
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}} -X main.builtBy=goreleaser
 archives:
   - id: archive
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ with .Mips }}_{{ . }}{{ end }}{{ if not (eq .Amd64 "v1") }}{{ .Amd64 }}{{ end }}'
-    format: tar.gz
+    formats: [ 'binary' ]
     files:
       - LICENSE*
       - README*    
       - dist/*.sig      
 snapshot:
-  name_template: '{{ .Version }}-SNAPSHOT-{{ .ShortCommit }}'
+  version_template: '{{ .Version }}'
 checksum:
   name_template: '{{ .ProjectName }}_{{ .Version }}_checksums.txt'
   algorithm: sha256
@@ -54,7 +49,7 @@ signs:
     args:
       - "--batch"
       - "--local-user"
-      - "{{ .Env.GPG_FINGERPRINT }}" # "5D8EA7261718FE5728BA937C97341836616BF511" salrashid123@gmail.com https://keyserver.ubuntu.com/pks/lookup?search=5D8EA7261718FE5728BA937C97341836616BF511&fingerprint=on&op=index
+      - "{{ .Env.GPG_FINGERPRINT }}" # "3FCD7ECFB7345F2A98F9F346285AEDB3D5B5EF74"
       - "--output"
       - "${signature}"
       - "--detach-sign"
@@ -84,5 +79,5 @@ sboms:
       - --output
       - spdx-json
     documents:
-      - ${artifact}.spdx.sbom
-    artifacts: archive
+      - '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ with .Mips }}_{{ . }}{{ end }}{{ if not (eq .Amd64 "v1") }}{{ .Amd64 }}{{ end }}.spdx.sbom'
+    artifacts: binary
