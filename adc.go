@@ -165,7 +165,6 @@ func main() {
 	rwr := transport.FromReadWriter(rwc)
 
 	var encryptionSessionHandle tpm2.TPMHandle
-	var encryptionPub *tpm2.TPMTPublic
 
 	if *sessionEncryptionName != "" {
 
@@ -187,11 +186,6 @@ func main() {
 		}()
 
 		encryptionSessionHandle = createEKRsp.ObjectHandle
-		encryptionPub, err = createEKRsp.OutPublic.Contents()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "can't create ekpub blob %v", err)
-			os.Exit(1)
-		}
 		if *sessionEncryptionName != hex.EncodeToString(createEKRsp.Name.Buffer) {
 			fmt.Fprintf(os.Stderr, "session encryption names do not match expected [%s] got [%s]", *sessionEncryptionName, hex.EncodeToString(createEKRsp.Name.Buffer))
 			os.Exit(1)
@@ -199,7 +193,6 @@ func main() {
 	}
 
 	var svcAccountKey tpm2.TPMHandle
-	var svcAccountKeyName tpm2.TPM2BName
 
 	parentPasswordAuth := getEnv(PARENT_PASS_VAR, "", *parentPass)
 	keyPasswordAuth := getEnv(KEY_PASS_VAR, "", *keyPass)
@@ -247,18 +240,8 @@ func main() {
 			os.Exit(1)
 		}
 		svcAccountKey = svcAccountKeyResponse.ObjectHandle
-		svcAccountKeyName = svcAccountKeyResponse.Name
 	} else {
 		svcAccountKey = tpm2.TPMHandle(*persistentHandle)
-		pub, err := tpm2.ReadPublic{
-			ObjectHandle: svcAccountKey,
-		}.Execute(rwr)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error executing tpm2.ReadPublic %v", err)
-			os.Exit(1)
-		}
-
-		svcAccountKeyName = pub.Name
 	}
 	defer func() {
 		flushContextCmd := tpm2.FlushContext{
@@ -319,14 +302,10 @@ func main() {
 	token := jwt.NewWithClaims(tpmjwt.SigningMethodTPMRS256, claims)
 
 	config := &tpmjwt.TPMConfig{
-		TPMDevice: rwc,
-		NamedHandle: tpm2.NamedHandle{
-			Handle: svcAccountKey,
-			Name:   svcAccountKeyName,
-		},
+		TPMDevice:        rwc,
+		Handle:           svcAccountKey,
 		AuthSession:      se,
 		EncryptionHandle: encryptionSessionHandle,
-		EncryptionPub:    encryptionPub,
 	}
 
 	keyctx, err := tpmjwt.NewTPMContext(ctx, config)
