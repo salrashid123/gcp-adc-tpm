@@ -270,6 +270,33 @@ Now run  and specify the password
    --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"  --keyPass=testpwd
 ```
 
+### gcloud CLI
+
+If you want to use `gcloud` to authenticate using this provider:
+
+with env-var:
+
+```bash
+$ export CLOUDSDK_AUTH_ACCESS_TOKEN=`/path/to/gcp-adc-tpm --keyfilepath path/to/tpm_private_key.pem  --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"" | jq -r '.access_token'`
+
+$ gcloud auth print-access-token
+eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzY2....
+```
+
+or with file:  `--access-token-file`
+
+```bash
+
+echo /path/to/gcp-adc-tpm --keyfilepath path/to/tpm_private_key.pem  --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"" | jq -r '.access_token' > /tmp/token.txt
+
+gcloud auth print-access-token --access-token-file=/tmp/token.txt
+```
+
+Note that the token is static and non-refreshable through gcloud. Each token generated is new and has a TTL of 1hour.
+
+Also note that issuing identity token is not supported
+
+
 ### Encrypted TPM Sessions
 
 If you want to enable [TPM Encrypted sessions](https://github.com/salrashid123/tpm2/tree/master/tpm_encrypted_session), you should provide the "name" of a trusted key on the TPM for each call.
