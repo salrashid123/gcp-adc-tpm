@@ -1,6 +1,6 @@
 ### TPM Credential Source for Google Cloud SDK
 
-Binary that just returns a Service Accounts `access_token` for use with GCP Credential Libraries where the key is accessed using direct calls to a `Trusted Platform Module` (TPM).
+Binary that just returns a Service Accounts `access_token` or `id_token` for use with GCP Credential Libraries where the key is accessed using direct calls to a `Trusted Platform Module` (TPM).
 
 While not running on a GCP platform like GCE, Cloud Run, GCF or GKE, `Service Account` authentication usually (with exception of workload federation) requires direct access to its RSA Private key.. 
 
@@ -31,6 +31,7 @@ This specific demo here will use option (1) which is the easiest but ultimately,
 * [Sealing RSA and Symmetric keys with GCP vTPMs](https://github.com/salrashid123/gcp_tpm_sealed_keys)
 * [golang-jwt for Trusted Platform Module (TPM)](https://github.com/salrashid123/golang-jwt-tpm)
 * [TPM based TLS using Attested Keys](https://github.com/salrashid123/tls_ak)
+* [Authenticating using Google OpenID Connect Tokens](https://github.com/salrashid123/google_id_token)
 
 as an side, you can also embed AWS credentials to hardware:
 
@@ -54,8 +55,10 @@ You can set the following options on usage:
 | **`--svcAccountEmail`** | (required) Service Account Email |
 | **`--parentPass`** | Passphrase for the owner handle (will use TPM_PARENT_AUTH env var) |
 | **`--keyPass`** | Passphrase for the key handle (will use TPM_KEY_AUTH env var) |
-| **`--pcrs`** | "PCR Bound value (increasing order, comma separated)" |
-| **`--scopes`** |  "comma separated scopes (default `https://www.googleapis.com/auth/cloud-platform`)" |
+| **`--pcrs`** | PCR Bound value (increasing order, comma separated) |
+| **`--scopes`** |  comma separated scopes (default `https://www.googleapis.com/auth/cloud-platform`) |
+| **`--identityToken`** |  Generate Google OIDC token |
+| **`--audience`** |  Audience for the id_token |
 | **`--expireIn`** | "How many seconds the token is valid for" |
 | **`--tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session |
 
@@ -189,6 +192,16 @@ gcp-adc-tpm --persistentHandle=0x81010002 --svcAccountEmail="tpm-sa@$PROJECT_ID.
 
 gcloud storage ls --access-token-file=token.txt
 ``` 
+
+### Acquire identity_token
+
+This uitlity can also genrate GCP ODIC id_tokens using the TPM based key.
+
+```bash
+./gcp-adc-tpm --keyfilepath=/path/to/private.pem --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"  --identityToken --audience=foo
+```
+
+For more information, see [Authenticating using Google OpenID Connect Tokens](https://github.com/salrashid123/google_id_token)
 
 ---
 

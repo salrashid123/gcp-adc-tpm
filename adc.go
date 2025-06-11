@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -20,6 +23,7 @@ import (
 
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
 	jwt "github.com/golang-jwt/jwt/v5"
+	"golang.org/x/oauth2"
 
 	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2"
@@ -44,6 +48,8 @@ var (
 	parentPass       = flag.String("parentPass", "", "Passphrase for the owner handle (will use TPM_PARENT_AUTH env var)")
 	keyPass          = flag.String("keyPass", "", "Passphrase for the key handle (will use TPM_KEY_AUTH env var)")
 	pcrs             = flag.String("pcrs", "", "PCR Bound value (increasing order, comma separated)")
+	identityToken    = flag.Bool("identityToken", false, "Generate google ID token (default: false)")
+	audience         = flag.String("audience", "", "Audience for the OIDC token")
 	expireIn         = flag.Int("expireIn", 3600, "Token expires in seconds")
 	scopes           = flag.String("scopes", "https://www.googleapis.com/auth/cloud-platform", "comma separated scopes")
 
@@ -147,7 +153,7 @@ func main() {
 
 	if *expireIn > 3600 {
 		fmt.Fprintf(os.Stderr, "Token expiry cannot exceed 3600s")
-		os.Exit(1)
+		return
 	}
 
 	rwc, err := openTPM(*tpmPath)
@@ -158,7 +164,7 @@ func main() {
 	defer func() {
 		if err := rwc.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "can't close TPM %q: %v", *tpmPath, err)
-			os.Exit(1)
+			return
 		}
 	}()
 
@@ -175,7 +181,7 @@ func main() {
 		createEKRsp, err := createEKCmd.Execute(rwr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "can't acquire acquire ek %v", err)
-			os.Exit(1)
+			return
 		}
 
 		defer func() {
@@ -188,7 +194,7 @@ func main() {
 		encryptionSessionHandle = createEKRsp.ObjectHandle
 		if *sessionEncryptionName != hex.EncodeToString(createEKRsp.Name.Buffer) {
 			fmt.Fprintf(os.Stderr, "session encryption names do not match expected [%s] got [%s]", *sessionEncryptionName, hex.EncodeToString(createEKRsp.Name.Buffer))
-			os.Exit(1)
+			return
 		}
 	}
 
@@ -201,12 +207,12 @@ func main() {
 		c, err := os.ReadFile(*keyfilepath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error reading private keyfile: %v", err)
-			os.Exit(1)
+			return
 		}
 		key, err := keyfile.Decode(c)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, " failed decoding key: %v", err)
-			os.Exit(1)
+			return
 		}
 		// specify its parent directly
 		primaryKey, err := tpm2.CreatePrimary{
@@ -215,7 +221,7 @@ func main() {
 		}.Execute(rwr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "can't create primary %q: %v", *tpmPath, err)
-			os.Exit(1)
+			return
 		}
 
 		defer func() {
@@ -237,7 +243,7 @@ func main() {
 		}.Execute(rwr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "can't load  rsaKey : %v", err)
-			os.Exit(1)
+			return
 		}
 		svcAccountKey = svcAccountKeyResponse.ObjectHandle
 	} else {
@@ -260,7 +266,7 @@ func main() {
 			j, err := strconv.Atoi(i)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR:  could convert pcr value: %v", err)
-				os.Exit(1)
+				return
 			}
 			pcrList = append(pcrList, uint(j))
 		}
@@ -279,10 +285,109 @@ func main() {
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR:  could not initialize Key: %v", err)
-		os.Exit(1)
+		return
 	}
 
 	// now we're ready to sign
+
+	if *identityToken {
+		if *audience == "" {
+			fmt.Fprintf(os.Stderr, "ERROR:  audience must be set if --identityToken is used")
+			return
+		}
+		iat := time.Now()
+		exp := iat.Add(time.Second * 10)
+
+		type idTokenJWT struct {
+			jwt.RegisteredClaims
+			TargetAudience string `json:"target_audience"`
+		}
+
+		claims := &idTokenJWT{
+			jwt.RegisteredClaims{
+				Issuer:    *svcAccountEmail,
+				IssuedAt:  jwt.NewNumericDate(iat),
+				ExpiresAt: jwt.NewNumericDate(exp),
+				Audience:  []string{"https://oauth2.googleapis.com/token"},
+			},
+			*audience,
+		}
+
+		tpmjwt.SigningMethodTPMRS256.Override()
+		jwt.MarshalSingleStringAsArray = false
+		token := jwt.NewWithClaims(tpmjwt.SigningMethodTPMRS256, claims)
+
+		ctx := context.Background()
+
+		config := &tpmjwt.TPMConfig{
+			TPMDevice:        rwc,
+			Handle:           svcAccountKey,
+			AuthSession:      se,
+			EncryptionHandle: encryptionSessionHandle,
+		}
+
+		keyctx, err := tpmjwt.NewTPMContext(ctx, config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Unable to initialize tpmJWT: %v", err)
+			return
+		}
+
+		tokenString, err := token.SignedString(keyctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error signing %v", err)
+			return
+		}
+
+		client := &http.Client{}
+
+		data := url.Values{}
+		data.Add("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
+		data.Add("assertion", tokenString)
+
+		hreq, err := http.NewRequest(http.MethodPost, "https://oauth2.googleapis.com/token", bytes.NewBufferString(data.Encode()))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Unable to generate token Request, %v\n", err)
+			return
+		}
+		hreq.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
+		resp, err := client.Do(hreq)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: unable to POST token request, %v\n", err)
+			return
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			f, err := io.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error Reading response body, %v\n", err)
+				return
+			}
+			fmt.Fprintf(os.Stderr, "Error: Token Request error:, %s\n", f)
+			return
+		}
+		defer resp.Body.Close()
+
+		type idTokenResponse struct {
+			IdToken string `json:"id_token"`
+		}
+
+		var ret idTokenResponse
+		err = json.NewDecoder(resp.Body).Decode(&ret)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: decoding token:, %s\n", err)
+			return
+		}
+		idTokenSource := oauth2.StaticTokenSource(&oauth2.Token{
+			AccessToken: ret.IdToken,
+		})
+		t, err := idTokenSource.Token()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: decoding token:, %s\n", err)
+			return
+		}
+		fmt.Println(string(t.AccessToken))
+		return
+	}
 
 	iat := time.Now()
 	exp := iat.Add(time.Duration(*expireIn) * time.Second)
@@ -311,13 +416,13 @@ func main() {
 	keyctx, err := tpmjwt.NewTPMContext(ctx, config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to initialize tpmJWT: %v", err)
-		os.Exit(1)
+		return
 	}
 
 	tokenString, err := token.SignedString(keyctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error signing %v", err)
-		os.Exit(1)
+		return
 	}
 
 	f := &Token{AccessToken: tokenString, TokenType: "Bearer", ExpiresIn: int64(exp.Sub(iat).Seconds())}
@@ -325,7 +430,7 @@ func main() {
 	fs, err := json.Marshal(f)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating json sting %v", err)
-		os.Exit(1)
+		return
 	}
 	fmt.Println(string(fs))
 }
