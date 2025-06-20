@@ -151,8 +151,10 @@ At this point, the embedded RSA key on the TPM is authorized for access GCP.
 
 On the machine with the TPM, specify the `PROJECT_ID` and the default persistent handle.  You should see an access token
 
+You can either build the binary or acquire it from the `Releases` page
+
 ```bash
-CGO_ENABLED=0 go build -o gcp-adc-tpm adc.go
+CGO_ENABLED=0 go build -o gcp-adc-tpm cmd/main.go
 
 # with persistentHandle
 ./gcp-adc-tpm --persistentHandle=0x81010002 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
