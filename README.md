@@ -57,6 +57,8 @@ You can set the following options on usage:
 | **`--pcrs`** | "PCR Bound value (increasing order, comma separated)" |
 | **`--scopes`** |  "comma separated scopes (default `https://www.googleapis.com/auth/cloud-platform`)" |
 | **`--expireIn`** | "How many seconds the token is valid for" |
+| **`--identityToken`** |  Generate Google OIDC token |
+| **`--audience`** |  Audience for the id_token |
 | **`--tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session |
 
 ### Setup
@@ -190,6 +192,16 @@ gcp-adc-tpm --persistentHandle=0x81010002 --svcAccountEmail="tpm-sa@$PROJECT_ID.
 gcloud storage ls --access-token-file=token.txt
 ``` 
 
+### Acquire identity_token
+
+This uitlity can also genrate GCP ODIC id_tokens using the TPM based key.
+
+```bash
+./gcp-adc-tpm   --keyfilepath=/path/to/private.pem  \
+     --audience=foo --serviceAccountEmail=tpm-sa@$PROJECT_ID.iam.gserviceaccount.com \
+     --identityToken
+```
+
 ---
 
 ### PCR Policy
@@ -320,6 +332,18 @@ For example:
 
 
 You can also derive the "name" from a public key of a known template  see [go-tpm.tpm2_get_name](https://github.com/salrashid123/tpm2/tree/master/tpm2_get_name)
+
+
+### Testing
+
+Unit test just verifies that a token is returned.  TODO is to validate the token against a gcp api (the oauth2 tokeninfo endopoint wont work because the access token is a self-signed JWT)
+
+```bash
+export CICD_SA_NAME="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
+export CICD_SA_PEM=`cat /tmp/key_rsa.pem`
+
+go test -v
+```
 
 
 ### Using ASN.1 Specification for TPM 2.0 Key Files

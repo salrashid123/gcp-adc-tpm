@@ -1,30 +1,28 @@
 // Creates creates GCP access tokens where the service account key
 // is saved on a Trusted Platform Module (TPM).
-//
-//	see https://github.com/salrashid123/gce_metadata_server
-package main
+
+package gcptpmcredential
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
-	"net"
+	"net/http"
+	"net/url"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
 	jwt "github.com/golang-jwt/jwt/v5"
+	"golang.org/x/oauth2"
 
-	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/google/go-tpm/tpmutil"
 
 	tpmjwt "github.com/salrashid123/golang-jwt-tpm"
 )
@@ -37,17 +35,6 @@ type rtokenJSON struct {
 }
 
 var (
-	tpmPath          = flag.String("tpm-path", "/dev/tpmrm0", "Path to the TPM device (character device or a Unix socket).")
-	persistentHandle = flag.Uint("persistentHandle", 0x81010002, "Handle value")
-	keyfilepath      = flag.String("keyfilepath", "", "TPM Encrypted KeyFile")
-	svcAccountEmail  = flag.String("svcAccountEmail", "", "Service Account Email")
-	parentPass       = flag.String("parentPass", "", "Passphrase for the owner handle (will use TPM_PARENT_AUTH env var)")
-	keyPass          = flag.String("keyPass", "", "Passphrase for the key handle (will use TPM_KEY_AUTH env var)")
-	pcrs             = flag.String("pcrs", "", "PCR Bound value (increasing order, comma separated)")
-	expireIn         = flag.Int("expireIn", 3600, "Token expires in seconds")
-	scopes           = flag.String("scopes", "https://www.googleapis.com/auth/cloud-platform", "comma separated scopes")
-
-	sessionEncryptionName = flag.String("tpm-session-encrypt-with-name", "", "hex encoded TPM object 'name' to use with an encrypted session")
 
 	/*
 		Template for the H2 h-2 is described in pg 43 [TCG EK Credential Profile](https://trustedcomputinggroup.org/wp-content/uploads/TCG_IWG_EKCredentialProfile_v2p4_r2_10feb2021.pdf)
@@ -111,18 +98,6 @@ const (
 	KEY_PASS_VAR    = "TPM_KEY_AUTH"
 )
 
-var TPMDEVICES = []string{"/dev/tpm0", "/dev/tpmrm0"}
-
-func openTPM(path string) (io.ReadWriteCloser, error) {
-	if slices.Contains(TPMDEVICES, path) {
-		return tpmutil.OpenTPM(path)
-	} else if path == "simulator" {
-		return simulator.GetWithFixedSeedInsecure(1073741825)
-	} else {
-		return net.Dial("tcp", path)
-	}
-}
-
 type Token struct {
 	// AccessToken is the token that authorizes and authenticates
 	// the requests.
@@ -140,33 +115,32 @@ type Token struct {
 	ExpiresIn int64 `json:"expires_in,omitempty"`
 }
 
-func main() {
+type GCPTPMConfig struct {
+	TPMCloser        io.ReadWriteCloser
+	PersistentHandle uint
+	CredentialFile   string
 
-	flag.Parse()
-	ctx := context.Background()
+	ExpireIn int
 
-	if *expireIn > 3600 {
-		fmt.Fprintf(os.Stderr, "Token expiry cannot exceed 3600s")
-		os.Exit(1)
-	}
+	IdentityToken         bool
+	Audience              string
+	ServiceAccountEmail   string
+	Scopes                []string
+	SessionEncryptionName string
+	Parentpass            string
+	Keypass               string
+	Pcrs                  string
+}
 
-	rwc, err := openTPM(*tpmPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "can't open TPM %s: %v", *tpmPath, err)
-		os.Exit(1)
-	}
-	defer func() {
-		if err := rwc.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "can't close TPM %q: %v", *tpmPath, err)
-			os.Exit(1)
-		}
-	}()
+var ()
 
-	rwr := transport.FromReadWriter(rwc)
+func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
+
+	rwr := transport.FromReadWriter(cfg.TPMCloser)
 
 	var encryptionSessionHandle tpm2.TPMHandle
 
-	if *sessionEncryptionName != "" {
+	if cfg.SessionEncryptionName != "" {
 
 		createEKCmd := tpm2.CreatePrimary{
 			PrimaryHandle: tpm2.TPMRHEndorsement,
@@ -174,8 +148,7 @@ func main() {
 		}
 		createEKRsp, err := createEKCmd.Execute(rwr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "can't acquire acquire ek %v", err)
-			os.Exit(1)
+			return Token{}, fmt.Errorf("gcp-adc-tpm: can't acquire acquire ek %v", err)
 		}
 
 		defer func() {
@@ -186,36 +159,32 @@ func main() {
 		}()
 
 		encryptionSessionHandle = createEKRsp.ObjectHandle
-		if *sessionEncryptionName != hex.EncodeToString(createEKRsp.Name.Buffer) {
-			fmt.Fprintf(os.Stderr, "session encryption names do not match expected [%s] got [%s]", *sessionEncryptionName, hex.EncodeToString(createEKRsp.Name.Buffer))
-			os.Exit(1)
+		if cfg.SessionEncryptionName != hex.EncodeToString(createEKRsp.Name.Buffer) {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: session encryption names do not match expected [%s] got [%s]", cfg.SessionEncryptionName, hex.EncodeToString(createEKRsp.Name.Buffer))
 		}
 	}
 
 	var svcAccountKey tpm2.TPMHandle
 
-	parentPasswordAuth := getEnv(PARENT_PASS_VAR, "", *parentPass)
-	keyPasswordAuth := getEnv(KEY_PASS_VAR, "", *keyPass)
+	parentPasswordAuth := getEnv(PARENT_PASS_VAR, "", cfg.Parentpass)
+	keyPasswordAuth := getEnv(KEY_PASS_VAR, "", cfg.Keypass)
 
-	if *keyfilepath != "" {
-		c, err := os.ReadFile(*keyfilepath)
+	if cfg.CredentialFile != "" {
+		c, err := os.ReadFile(cfg.CredentialFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error reading private keyfile: %v", err)
-			os.Exit(1)
+			return Token{}, fmt.Errorf("gcp-adc-tpm: error reading private keyfile: %v", err)
 		}
 		key, err := keyfile.Decode(c)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, " failed decoding key: %v", err)
-			os.Exit(1)
+			return Token{}, fmt.Errorf("gcp-adc-tpm: failed decoding key: %v", err)
 		}
 		// specify its parent directly
 		primaryKey, err := tpm2.CreatePrimary{
-			PrimaryHandle: key.Parent,
-			InPublic:      tpm2.New2B(ECCSRK_H2_Template),
+			PrimaryHandle: tpm2.TPMRHOwner,
+			InPublic:      tpm2.New2B(keyfile.ECCSRK_H2_Template),
 		}.Execute(rwr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "can't create primary %q: %v", *tpmPath, err)
-			os.Exit(1)
+			return Token{}, fmt.Errorf("gcp-adc-tpm: can't create primary  %v", err)
 		}
 
 		defer func() {
@@ -236,12 +205,11 @@ func main() {
 			InPrivate: key.Privkey,
 		}.Execute(rwr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "can't load  rsaKey : %v", err)
-			os.Exit(1)
+			return Token{}, fmt.Errorf("gcp-adc-tpm:can't load  rsaKey : %v", err)
 		}
 		svcAccountKey = svcAccountKeyResponse.ObjectHandle
 	} else {
-		svcAccountKey = tpm2.TPMHandle(*persistentHandle)
+		svcAccountKey = tpm2.TPMHandle(cfg.PersistentHandle)
 	}
 	defer func() {
 		flushContextCmd := tpm2.FlushContext{
@@ -251,16 +219,15 @@ func main() {
 	}()
 
 	var se tpmjwt.Session
-
-	if *pcrs != "" {
-		strpcrs := strings.Split(*pcrs, ",")
+	var err error
+	if cfg.Pcrs != "" {
+		strpcrs := strings.Split(cfg.Pcrs, ",")
 		var pcrList = []uint{}
 
 		for _, i := range strpcrs {
 			j, err := strconv.Atoi(i)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "ERROR:  could convert pcr value: %v", err)
-				os.Exit(1)
+				return Token{}, fmt.Errorf("gcp-adc-tpm:  could convert pcr value: %v", err)
 			}
 			pcrList = append(pcrList, uint(j))
 		}
@@ -278,22 +245,114 @@ func main() {
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR:  could not initialize Key: %v", err)
-		os.Exit(1)
+		return Token{}, fmt.Errorf("gcp-adc-tpm:  could not initialize Key: %v", err)
 	}
 
 	// now we're ready to sign
 
+	if cfg.IdentityToken {
+		if cfg.Audience == "" {
+			return Token{}, fmt.Errorf("gcp-adc-tpm:  audience must be set if --identityToken is used")
+		}
+		iat := time.Now()
+		exp := iat.Add(time.Second * time.Duration(cfg.ExpireIn))
+
+		type idTokenJWT struct {
+			jwt.RegisteredClaims
+			TargetAudience string `json:"target_audience"`
+		}
+
+		claims := &idTokenJWT{
+			RegisteredClaims: jwt.RegisteredClaims{
+				Issuer:    cfg.ServiceAccountEmail,
+				IssuedAt:  jwt.NewNumericDate(iat),
+				ExpiresAt: jwt.NewNumericDate(exp),
+				Audience:  []string{"https://oauth2.googleapis.com/token"},
+			},
+			TargetAudience: cfg.Audience,
+		}
+
+		tpmjwt.SigningMethodTPMRS256.Override()
+		jwt.MarshalSingleStringAsArray = false
+		token := jwt.NewWithClaims(tpmjwt.SigningMethodTPMRS256, claims)
+
+		ctx := context.Background()
+		config := &tpmjwt.TPMConfig{
+			TPMDevice:        cfg.TPMCloser,
+			Handle:           svcAccountKey,
+			AuthSession:      se,
+			EncryptionHandle: encryptionSessionHandle,
+		}
+		keyctx, err := tpmjwt.NewTPMContext(ctx, config)
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: Unable to initialize tpmJWT: %v", err)
+		}
+
+		tokenString, err := token.SignedString(keyctx)
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
+		}
+		client := &http.Client{}
+
+		data := url.Values{}
+		data.Add("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
+		data.Add("assertion", tokenString)
+
+		hreq, err := http.NewRequest(http.MethodPost, "https://oauth2.googleapis.com/token", bytes.NewBufferString(data.Encode()))
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: Error: Unable to generate token Request, %v", err)
+		}
+		hreq.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
+		resp, err := client.Do(hreq)
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm:  unable to POST token request, %v", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			f, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return Token{}, fmt.Errorf("gcp-adc-tpm: Error Reading response body, %v", err)
+
+			}
+			return Token{}, fmt.Errorf("gcp-adc-tpm: Error: Token Request error:, %s", f)
+		}
+		defer resp.Body.Close()
+
+		type idTokenResponse struct {
+			IdToken string `json:"id_token"`
+		}
+
+		var ret idTokenResponse
+		err = json.NewDecoder(resp.Body).Decode(&ret)
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: Error: decoding token:, %s", err)
+
+		}
+		idTokenSource := oauth2.StaticTokenSource(&oauth2.Token{
+			AccessToken: ret.IdToken,
+		})
+		t, err := idTokenSource.Token()
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: Error: decoding token:, %s", err)
+
+		}
+
+		f := Token{AccessToken: t.AccessToken, TokenType: "Bearer", ExpiresIn: int64(exp.Sub(iat).Seconds())}
+
+		return f, nil
+
+	}
+
 	iat := time.Now()
-	exp := iat.Add(time.Duration(*expireIn) * time.Second)
+	exp := iat.Add(time.Duration(cfg.ExpireIn) * time.Second)
 
 	claims := &oauthJWT{
-		Scope: strings.Replace(*scopes, ",", " ", -1),
+		Scope: strings.Join(cfg.Scopes, " "),
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(iat),
 			ExpiresAt: jwt.NewNumericDate(exp),
-			Issuer:    *svcAccountEmail,
-			Subject:   *svcAccountEmail,
+			Issuer:    cfg.ServiceAccountEmail,
+			Subject:   cfg.ServiceAccountEmail,
 		},
 	}
 
@@ -302,32 +361,27 @@ func main() {
 	token := jwt.NewWithClaims(tpmjwt.SigningMethodTPMRS256, claims)
 
 	config := &tpmjwt.TPMConfig{
-		TPMDevice:        rwc,
+		TPMDevice:        cfg.TPMCloser,
 		Handle:           svcAccountKey,
 		AuthSession:      se,
 		EncryptionHandle: encryptionSessionHandle,
 	}
 
+	ctx := context.Background()
 	keyctx, err := tpmjwt.NewTPMContext(ctx, config)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Unable to initialize tpmJWT: %v", err)
-		os.Exit(1)
+		return Token{}, fmt.Errorf("gcp-adc-tpm: Unable to initialize tpmJWT: %v", err)
 	}
 
 	tokenString, err := token.SignedString(keyctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error signing %v", err)
-		os.Exit(1)
+		return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
+
 	}
 
-	f := &Token{AccessToken: tokenString, TokenType: "Bearer", ExpiresIn: int64(exp.Sub(iat).Seconds())}
+	f := Token{AccessToken: tokenString, TokenType: "Bearer", ExpiresIn: int64(exp.Sub(iat).Seconds())}
 
-	fs, err := json.Marshal(f)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating json sting %v", err)
-		os.Exit(1)
-	}
-	fmt.Println(string(fs))
+	return f, nil
 }
 
 func getEnv(key, fallback string, fromArg string) string {
@@ -338,29 +392,4 @@ func getEnv(key, fallback string, fromArg string) string {
 		return value
 	}
 	return fallback
-}
-
-func getExpectedPCRDigest(thetpm transport.TPM, selection tpm2.TPMLPCRSelection, hashAlg tpm2.TPMAlgID) ([]byte, error) {
-	pcrRead := tpm2.PCRRead{
-		PCRSelectionIn: selection,
-	}
-
-	pcrReadRsp, err := pcrRead.Execute(thetpm)
-	if err != nil {
-		return nil, err
-	}
-
-	var expectedVal []byte
-	for _, digest := range pcrReadRsp.PCRValues.Digests {
-		expectedVal = append(expectedVal, digest.Buffer...)
-	}
-
-	cryptoHashAlg, err := hashAlg.Hash()
-	if err != nil {
-		return nil, err
-	}
-
-	hash := cryptoHashAlg.New()
-	hash.Write(expectedVal)
-	return hash.Sum(nil), nil
 }
