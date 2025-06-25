@@ -60,6 +60,7 @@ You can set the following options on usage:
 | **`--expireIn`** | "How many seconds the token is valid for" |
 | **`--identityToken`** |  Generate Google OIDC token |
 | **`--audience`** |  Audience for the id_token |
+| **`--rawOutput`** |  Return just the token, nothing else |
 | **`--tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session |
 
 ### Setup

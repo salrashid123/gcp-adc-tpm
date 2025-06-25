@@ -34,6 +34,8 @@ var (
 	identityToken = flag.Bool("identityToken", false, "Generate google ID token (default: false)")
 	audience      = flag.String("audience", "", "Audience for the OIDC token")
 
+	rawOutput = flag.Bool("rawOutput", false, "return just the token, nothing else")
+
 	sessionEncryptionName = flag.String("tpm-session-encrypt-with-name", "", "hex encoded TPM object 'name' to use with an encrypted session")
 	version               = flag.Bool("version", false, "print version")
 
@@ -91,6 +93,10 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: Error getting credentials %v", err)
 		os.Exit(1)
+	}
+	if *rawOutput {
+		fmt.Println(resp.AccessToken)
+		return
 	}
 	m, err := json.Marshal(resp)
 	if err != nil {
