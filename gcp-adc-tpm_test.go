@@ -2,6 +2,7 @@ package gcptpmcredential
 
 import (
 	"bytes"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"os"
@@ -40,10 +41,12 @@ func loadKey(rwr transport.TPM, persistentHandle uint, keyFilePath string) (tpm2
 	if block == nil {
 		return 0, tpm2.TPM2BName{}, nil, err
 	}
-	pv, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	pvk, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
 		return 0, tpm2.TPM2BName{}, nil, err
 	}
+
+	pv := pvk.(*rsa.PrivateKey)
 
 	rsaTemplate := tpm2.TPMTPublic{
 		Type:    tpm2.TPMAlgRSA,
@@ -182,7 +185,7 @@ func TestPersistentHandleCredentials(t *testing.T) {
 	require.NoError(t, err)
 	defer closer()
 
-	saEmail := os.Getenv("CICD_SA_NAME")
+	saEmail := os.Getenv("CICD_SA_EMAIL")
 
 	_, err = NewGCPTPMCredential(&GCPTPMConfig{
 		TPMCloser:           tpmDevice,
@@ -212,13 +215,74 @@ func TestKeyFileCredentials(t *testing.T) {
 	require.NoError(t, err)
 	defer closer()
 
-	saEmail := os.Getenv("CICD_SA_NAME")
+	saEmail := os.Getenv("CICD_SA_EMAIL")
 
 	_, err = NewGCPTPMCredential(&GCPTPMConfig{
 		TPMCloser:           tpmDevice,
 		CredentialFile:      filePath,
 		ServiceAccountEmail: saEmail,
 		ExpireIn:            10,
+		Scopes:              []string{"https://www.googleapis.com/auth/cloud-platform"},
+	})
+	require.NoError(t, err)
+
+	//t.Log(resp.AccessToken)
+}
+
+func TestOauth2Token(t *testing.T) {
+	tpmDevice, err := simulator.Get()
+	require.NoError(t, err)
+	defer tpmDevice.Close()
+
+	rwr := transport.FromReadWriter(tpmDevice)
+
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "key.pem")
+
+	persistentHandle := 0x81008001
+	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath)
+	require.NoError(t, err)
+	defer closer()
+
+	saEmail := os.Getenv("CICD_SA_EMAIL")
+
+	_, err = NewGCPTPMCredential(&GCPTPMConfig{
+		TPMCloser:           tpmDevice,
+		CredentialFile:      filePath,
+		ServiceAccountEmail: saEmail,
+		ExpireIn:            10,
+		UseOauthToken:       true,
+		Scopes:              []string{"https://www.googleapis.com/auth/cloud-platform"},
+	})
+	require.NoError(t, err)
+
+	//t.Log(resp.AccessToken)
+}
+
+func TestIdToken(t *testing.T) {
+	tpmDevice, err := simulator.Get()
+	require.NoError(t, err)
+	defer tpmDevice.Close()
+
+	rwr := transport.FromReadWriter(tpmDevice)
+
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "key.pem")
+
+	persistentHandle := 0x81008001
+	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath)
+	require.NoError(t, err)
+	defer closer()
+
+	saEmail := os.Getenv("CICD_SA_EMAIL")
+
+	_, err = NewGCPTPMCredential(&GCPTPMConfig{
+		TPMCloser:           tpmDevice,
+		CredentialFile:      filePath,
+		ServiceAccountEmail: saEmail,
+		ExpireIn:            10,
+		IdentityToken:       true,
+		Audience:            "https://foo.bar",
 		Scopes:              []string{"https://www.googleapis.com/auth/cloud-platform"},
 	})
 	require.NoError(t, err)

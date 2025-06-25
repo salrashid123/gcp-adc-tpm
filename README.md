@@ -56,6 +56,7 @@ You can set the following options on usage:
 | **`--keyPass`** | Passphrase for the key handle (will use TPM_KEY_AUTH env var) |
 | **`--pcrs`** | "PCR Bound value (increasing order, comma separated)" |
 | **`--scopes`** |  "comma separated scopes (default `https://www.googleapis.com/auth/cloud-platform`)" |
+| **`--useOauthToken`** | enable oauth2 token (default:false) |
 | **`--expireIn`** | "How many seconds the token is valid for" |
 | **`--identityToken`** |  Generate Google OIDC token |
 | **`--audience`** |  Audience for the id_token |
@@ -194,9 +195,22 @@ gcp-adc-tpm --persistentHandle=0x81010002 --svcAccountEmail="tpm-sa@$PROJECT_ID.
 gcloud storage ls --access-token-file=token.txt
 ``` 
 
+### Acquire oauth2 token
+
+The default token this utility returns is a `JWT AccessToken with Scopes` described in [AIP4111: Self-signed JWT](https://google.aip.dev/auth/4111).  This is a custom flow for Google Cloud APIs and is not an Oauth2 Token.
+
+If you want to acquire an actual oauth2 token as described [here](https://developers.google.com/identity/protocols/oauth2#serviceaccount) request, then just set `-identityToken --audience=foo`
+
+```bash
+./gcp-adc-tpm --keyfilepath=/path/to/private.pem \
+   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com \
+   -identityToken --audience=foo
+
+```
+
 ### Acquire identity_token
 
-This uitlity can also genrate GCP ODIC id_tokens using the TPM based key.
+This uitlity can also genrate [GCP OIDC TOken](https://github.com/salrashid123/google_id_token) using the TPM based key.
 
 ```bash
 ./gcp-adc-tpm   --keyfilepath=/path/to/private.pem  \

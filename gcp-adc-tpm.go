@@ -34,59 +34,7 @@ type rtokenJSON struct {
 	ExpiresIn    int    `json:"expires_in"`
 }
 
-var (
-
-	/*
-		Template for the H2 h-2 is described in pg 43 [TCG EK Credential Profile](https://trustedcomputinggroup.org/wp-content/uploads/TCG_IWG_EKCredentialProfile_v2p4_r2_10feb2021.pdf)
-
-		for use with KeyFiles described in 	[ASN.1 Specification for TPM 2.0 Key Files](https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html#name-parent)
-
-		printf '\x00\x00' > unique.dat
-		tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
-	*/
-
-	ECCSRK_H2_Template = tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgECC,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			FixedTPM:            true,
-			FixedParent:         true,
-			SensitiveDataOrigin: true,
-			UserWithAuth:        true,
-			NoDA:                true,
-			Restricted:          true,
-			Decrypt:             true,
-		},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgECC,
-			&tpm2.TPMSECCParms{
-				Symmetric: tpm2.TPMTSymDefObject{
-					Algorithm: tpm2.TPMAlgAES,
-					KeyBits: tpm2.NewTPMUSymKeyBits(
-						tpm2.TPMAlgAES,
-						tpm2.TPMKeyBits(128),
-					),
-					Mode: tpm2.NewTPMUSymMode(
-						tpm2.TPMAlgAES,
-						tpm2.TPMAlgCFB,
-					),
-				},
-				CurveID: tpm2.TPMECCNistP256,
-			},
-		),
-		Unique: tpm2.NewTPMUPublicID(
-			tpm2.TPMAlgECC,
-			&tpm2.TPMSECCPoint{
-				X: tpm2.TPM2BECCParameter{
-					Buffer: make([]byte, 0),
-				},
-				Y: tpm2.TPM2BECCParameter{
-					Buffer: make([]byte, 0),
-				},
-			},
-		),
-	}
-)
+var ()
 
 type oauthJWT struct {
 	Scope string `json:"scope"`
@@ -130,6 +78,7 @@ type GCPTPMConfig struct {
 	Parentpass            string
 	Keypass               string
 	Pcrs                  string
+	UseOauthToken         bool // enables oauth2 token (default: false)
 }
 
 var ()
@@ -343,22 +292,8 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 
 	}
 
-	iat := time.Now()
-	exp := iat.Add(time.Duration(cfg.ExpireIn) * time.Second)
-
-	claims := &oauthJWT{
-		Scope: strings.Join(cfg.Scopes, " "),
-		RegisteredClaims: jwt.RegisteredClaims{
-			IssuedAt:  jwt.NewNumericDate(iat),
-			ExpiresAt: jwt.NewNumericDate(exp),
-			Issuer:    cfg.ServiceAccountEmail,
-			Subject:   cfg.ServiceAccountEmail,
-		},
-	}
-
-	tpmjwt.SigningMethodTPMRS256.Override()
-	jwt.MarshalSingleStringAsArray = false
-	token := jwt.NewWithClaims(tpmjwt.SigningMethodTPMRS256, claims)
+	var f Token
+	ctx := context.Background()
 
 	config := &tpmjwt.TPMConfig{
 		TPMDevice:        cfg.TPMCloser,
@@ -366,20 +301,97 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		AuthSession:      se,
 		EncryptionHandle: encryptionSessionHandle,
 	}
-
-	ctx := context.Background()
 	keyctx, err := tpmjwt.NewTPMContext(ctx, config)
 	if err != nil {
-		return Token{}, fmt.Errorf("gcp-adc-tpm: Unable to initialize tpmJWT: %v", err)
-	}
-
-	tokenString, err := token.SignedString(keyctx)
-	if err != nil {
 		return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
-
 	}
 
-	f := Token{AccessToken: tokenString, TokenType: "Bearer", ExpiresIn: int64(exp.Sub(iat).Seconds())}
+	tpmjwt.SigningMethodTPMRS256.Override()
+	jwt.MarshalSingleStringAsArray = false
+
+	if cfg.UseOauthToken {
+
+		iat := time.Now()
+		exp := iat.Add(10 * time.Second) // we only need this JWT valid long enough to exchange for an access_token
+
+		claims := &oauthJWT{
+			Scope: strings.Join(cfg.Scopes, " "),
+			RegisteredClaims: jwt.RegisteredClaims{
+				IssuedAt:  jwt.NewNumericDate(iat),
+				ExpiresAt: jwt.NewNumericDate(exp),
+				Issuer:    cfg.ServiceAccountEmail,
+				Audience:  []string{"https://oauth2.googleapis.com/token"},
+			},
+		}
+
+		token := jwt.NewWithClaims(tpmjwt.SigningMethodTPMRS256, claims)
+
+		tokenString, err := token.SignedString(keyctx)
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
+		}
+		client := &http.Client{}
+
+		data := url.Values{}
+		data.Set("grant_type", "assertion")
+		data.Add("assertion_type", "http://oauth.net/grant_type/jwt/1.0/bearer")
+		data.Add("assertion", tokenString)
+
+		hreq, err := http.NewRequest(http.MethodPost, "https://accounts.google.com/o/oauth2/token", bytes.NewBufferString(data.Encode()))
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
+		}
+		hreq.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
+		resp, err := client.Do(hreq)
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			f, err := io.ReadAll(resp.Body)
+			defer resp.Body.Close()
+			if err != nil {
+				return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
+			}
+			return Token{}, fmt.Errorf("salrashid123/x/oauth2/google: Token Request error:, %s", string(f))
+		}
+
+		fa, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
+		}
+		resp.Body.Close()
+		var m rtokenJSON
+		err = json.Unmarshal(fa, &m)
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
+		}
+		defaultExp := iat.Add(3600 * time.Second)
+		f = Token{AccessToken: m.AccessToken, TokenType: "Bearer", ExpiresIn: int64(defaultExp.Second())}
+
+	} else {
+
+		iat := time.Now()
+		exp := iat.Add(time.Duration(cfg.ExpireIn) * time.Second)
+
+		claims := &oauthJWT{
+			Scope: strings.Join(cfg.Scopes, " "),
+			RegisteredClaims: jwt.RegisteredClaims{
+				IssuedAt:  jwt.NewNumericDate(iat),
+				ExpiresAt: jwt.NewNumericDate(exp),
+				Issuer:    cfg.ServiceAccountEmail,
+				Subject:   cfg.ServiceAccountEmail,
+			},
+		}
+
+		token := jwt.NewWithClaims(tpmjwt.SigningMethodTPMRS256, claims)
+
+		tokenString, err := token.SignedString(keyctx)
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
+		}
+
+		f = Token{AccessToken: tokenString, TokenType: "Bearer", ExpiresIn: int64(exp.Sub(iat).Seconds())}
+	}
 
 	return f, nil
 }
