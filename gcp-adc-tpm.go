@@ -285,8 +285,8 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			return Token{}, fmt.Errorf("gcp-adc-tpm: Error: decoding token:, %s", err)
 
 		}
-
-		f := Token{AccessToken: t.AccessToken, TokenType: "Bearer", ExpiresIn: int64(exp.Sub(iat).Seconds())}
+		defaultExpSeconds := 3600
+		f := Token{AccessToken: t.AccessToken, TokenType: "Bearer", ExpiresIn: int64(defaultExpSeconds)}
 
 		return f, nil
 
@@ -365,8 +365,8 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		if err != nil {
 			return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
 		}
-		defaultExp := iat.Add(3600 * time.Second)
-		f = Token{AccessToken: m.AccessToken, TokenType: "Bearer", ExpiresIn: int64(defaultExp.Second())}
+		defaultExpSeconds := 3600
+		f = Token{AccessToken: m.AccessToken, TokenType: "Bearer", ExpiresIn: int64(defaultExpSeconds)}
 
 	} else {
 
@@ -390,7 +390,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
 		}
 
-		f = Token{AccessToken: tokenString, TokenType: "Bearer", ExpiresIn: int64(exp.Sub(iat).Seconds())}
+		f = Token{AccessToken: tokenString, TokenType: "Bearer", ExpiresIn: int64(cfg.ExpireIn)}
 	}
 
 	return f, nil
