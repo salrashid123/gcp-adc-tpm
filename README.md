@@ -199,13 +199,11 @@ gcloud storage ls --access-token-file=token.txt
 
 The default token this utility returns is a `JWT AccessToken with Scopes` described in [AIP4111: Self-signed JWT](https://google.aip.dev/auth/4111).  This is a custom flow for Google Cloud APIs and is not an Oauth2 Token.
 
-If you want to acquire an actual oauth2 token as described [here](https://developers.google.com/identity/protocols/oauth2#serviceaccount) request, then just set `-identityToken --audience=foo`
+If you want to acquire an actual oauth2 token as described [here](https://developers.google.com/identity/protocols/oauth2#serviceaccount) request, then just set `--useOauthToken` flag
 
 ```bash
 ./gcp-adc-tpm --keyfilepath=/path/to/private.pem \
-   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com \
-   -identityToken --audience=foo
-
+   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com -useOauthToken 
 ```
 
 ### Acquire identity_token
@@ -214,8 +212,7 @@ This uitlity can also genrate [GCP OIDC TOken](https://github.com/salrashid123/g
 
 ```bash
 ./gcp-adc-tpm   --keyfilepath=/path/to/private.pem  \
-     --audience=foo --serviceAccountEmail=tpm-sa@$PROJECT_ID.iam.gserviceaccount.com \
-     --identityToken
+     --audience=foo --identityToken --serviceAccountEmail=tpm-sa@$PROJECT_ID.iam.gserviceaccount.com \
 ```
 
 ---
