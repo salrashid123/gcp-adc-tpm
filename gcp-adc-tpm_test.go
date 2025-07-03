@@ -154,7 +154,7 @@ func loadKey(rwr transport.TPM, persistentHandle uint, keyFilePath string) (tpm2
 	tkf := &keyfile.TPMKey{
 		Keytype:   keyfile.OIDLoadableKey,
 		EmptyAuth: true,
-		Parent:    primaryKey.ObjectHandle,
+		Parent:    tpm2.TPMRHOwner,
 		Pubkey:    tpm2.New2B(rsaTemplate),
 		Privkey:   importResponse.OutPrivate,
 	}
