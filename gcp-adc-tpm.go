@@ -129,7 +129,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		}
 		// specify its parent directly
 		primaryKey, err := tpm2.CreatePrimary{
-			PrimaryHandle: tpm2.TPMRHOwner,
+			PrimaryHandle: key.Parent,
 			InPublic:      tpm2.New2B(keyfile.ECCSRK_H2_Template),
 		}.Execute(rwr)
 		if err != nil {
