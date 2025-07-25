@@ -61,6 +61,7 @@ You can set the following options on usage:
 | **`--identityToken`** |  Generate Google OIDC token |
 | **`--audience`** |  Audience for the id_token |
 | **`--rawOutput`** |  Return just the token, nothing else |
+| **`--useEKParent`** | Use endorsement RSAKey as parent (default: false) |
 | **`--tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session |
 
 ### Setup
@@ -322,6 +323,179 @@ Note that the token is static and non-refreshable through gcloud. Each token gen
 
 Also note that issuing identity token is not supported
 
+##### Use Endorsement Key as parent
+
+If you used option `C` above to transfer the service account key from `TPM-A` to `TPM-B` (tpm-b being the system where you will run the metadata server):
+
+you can use `tpm2_duplicate` or the  utility here [tpmcopy: Transfer RSA|ECC|AES|HMAC key to a remote Trusted Platform Module (TPM)](https://github.com/salrashid123/tpmcopy) tool.  Note that the 'parent' key is set to `Endorsement RSA` which needs to get initialized on tpm-b first.  Furthermore, the key is bound by `pcr_duplicateselect` policy which must get fulfilled.
+
+The following examples shows how to use this cli if you transferred the key using pcr or password policy as well as if you saved the transferred key as PEM or persistent handle
+
+start two tpms to simulate two different system
+
+```bash
+## TPM A
+rm -rf /tmp/myvtpm && mkdir /tmp/myvtpm
+/usr/share/swtpm/swtpm-create-user-config-files
+swtpm_setup --tpmstate /tmp/myvtpm --tpm2 --create-ek-cert
+swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear --log level=2
+
+## in new window
+export TPM2TOOLS_TCTI="swtpm:port=2321"
+
+
+## TPM B
+rm -rf /tmp/myvtpm2 && mkdir /tmp/myvtpm2
+/usr/share/swtpm/swtpm-create-user-config-files
+swtpm_setup --tpmstate /tmp/myvtpm2 --tpm2 --create-ek-cert
+swtpm socket --tpmstate dir=/tmp/myvtpm2 --tpm2 --server type=tcp,port=2341 --ctrl type=tcp,port=2342 --flags not-need-init,startup-clear --log level=2
+
+## in new window
+export TPM2TOOLS_TCTI="swtpm:port=2341"
+
+tpm2_flushcontext -t &&  tpm2_flushcontext -s  &&  tpm2_flushcontext -l
+```
+
+* Password Policy
+
+With service account key saved as PEM key file 
+
+```bash
+export TPMA="127.0.0.1:2321"
+export TPMB="127.0.0.1:2341"
+
+export TPM2TOOLS_TCTI="swtpm:port=2321"
+export TPM2TOOLS_TCTI="swtpm:port=2341"
+
+### TPM-B
+tpmcopy --mode publickey --parentKeyType=rsa -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMB
+### copy public.pem to TPM-A
+
+### TPM-A
+tpmcopy --mode duplicate  --secret=/tmp/key_rsa.pem --keyType=rsa \
+   --password=bar -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json --tpm-path=$TPMA
+
+### copy out.json to TPM-B
+### TPM-B
+tpmcopy --mode import --parentKeyType=rsa --in=/tmp/out.json --out=/tmp/tpmkey.pem --parent=0x81008000 --tpm-path=$TPMB
+
+### run 
+go run cmd/main.go  --keyfilepath=/tmp/tpmkey.pem \
+     --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+     --useEKParent --keyPass=bar --tpm-path=127.0.0.1:2341
+```
+
+With service account key saved as a `PersistentHandle`
+
+```bash
+### TPM-B
+tpmcopy --mode publickey --parentKeyType=rsa -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMB
+### copy public.pem to TPM-A
+
+### TPM-A
+tpmcopy --mode duplicate  --secret=/tmp/key_rsa.pem --keyType=rsa \
+   --password=bar -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json --tpm-path=$TPMA
+
+### copy out.json to TPM-B
+### TPM-B
+tpmcopy --mode import --parentKeyType=rsa \
+ --in=/tmp/out.json --out=/tmp/tpmkey.pem \
+ --pubout=/tmp/pub.dat --privout=/tmp/priv.dat \
+  --parent=0x81008000 --tpm-path=$TPMB
+
+tpmcopy --mode evict \
+    --persistentHandle=0x81008001 \
+   --in=/tmp/tpmkey.pem --tpm-path=$TPMB
+
+# tpm2_createek -c ek.ctx -G rsa -u ek.pub 
+# tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+# tpm2 startauthsession --session session.ctx --policy-session
+# tpm2 policysecret --session session.ctx --object-context endorsement
+# tpm2_load -C ek.ctx -c key.ctx -u pub.dat -r priv.dat --auth session:session.ctx
+# tpm2_evictcontrol -c key.ctx 0x81008001
+# tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+
+### run 
+go run cmd/main.go  --keyfilepath=/tmp/tpmkey.pem \
+     --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+     --useEKParent --keyPass=bar --persistentHandle 0x81008001 --tpm-path=127.0.0.1:2341
+```
+
+* PCR Policy
+
+Ensure `TPM-B` as a PCR you want to bind to
+
+```bash
+$ tpm2_pcrread sha256:23
+  sha256:
+    23: 0x0000000000000000000000000000000000000000000000000000000000000000
+$ tpm2_pcrextend 23:sha256=0x0000000000000000000000000000000000000000000000000000000000000000
+$ tpm2_pcrread sha256:23
+  sha256:
+    23: 0xF5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B
+```
+
+With service account key saved as PEM key file
+
+```bash
+### TPM-B
+tpmcopy --mode publickey --parentKeyType=rsa -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMB
+### copy public.pem to TPM-A
+
+### TPM-A
+tpmcopy --mode duplicate --keyType=rsa    --secret=/tmp/key_rsa.pem \
+     --pcrValues=23:f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b  \
+      -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json --tpm-path=$TPMA
+### copy out.json to TPM-B
+
+### TPM-B
+tpmcopy --mode import --parentKeyType=rsa --in=/tmp/out.json --out=/tmp/tpmkey.pem --tpm-path=$TPMB
+
+### run 
+go run cmd/main.go  --keyfilepath=/tmp/tpmkey.pem \
+     --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+     --useEKParent --pcrs=23 --tpm-path=127.0.0.1:2341
+```
+
+With service account key saved as a `PersistentHandle`
+
+```bash
+### TPM-B
+tpmcopy --mode publickey --parentKeyType=rsa -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMB
+### copy public.pem to TPM-A
+
+### TPM-A
+tpmcopy --mode duplicate --keyType=rsa    --secret=/tmp/key_rsa.pem \
+     --pcrValues=23:f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b  \
+      -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json --tpm-path=$TPMA
+
+### copy out.json to TPM-B
+### TPM-B
+tpmcopy --mode import --parentKeyType=rsa \
+ --in=/tmp/out.json --out=/tmp/tpmkey.pem \
+ --pubout=/tmp/pub.dat --privout=/tmp/priv.dat \
+  --parent=0x81008000 --tpm-path=$TPMB
+
+tpmcopy --mode evict \
+    --persistentHandle=0x81008001 \
+   --in=/tmp/tpmkey.pem --tpm-path=$TPMB
+
+### or using tpm2_tools:
+# tpm2_createek -c ek.ctx -G rsa -u ek.pub 
+# tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+# tpm2 startauthsession --session session.ctx --policy-session
+# tpm2 policysecret --session session.ctx --object-context endorsement
+# tpm2_load -C ek.ctx -c key.ctx -u pub.dat -r priv.dat --auth session:session.ctx
+# tpm2_evictcontrol -c key.ctx 0x81008001
+# tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+
+### run 
+go run cmd/main.go \
+     --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+     --useEKParent --pcrs=23 --tpm-path=127.0.0.1:2341 --persistentHandle 0x81008001 \
+       --tpm-path=127.0.0.1:2341
+```
+
 
 ### Encrypted TPM Sessions
 
@@ -353,7 +527,7 @@ You can also derive the "name" from a public key of a known template  see [go-tp
 Unit test just verifies that a token is returned.  TODO is to validate the token against a gcp api (the oauth2 tokeninfo endopoint wont work because the access token is a self-signed JWT)
 
 ```bash
-export CICD_SA_NAME="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
+export CICD_SA_EMAIL="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
 export CICD_SA_PEM=`cat /tmp/key_rsa.pem`
 
 go test -v

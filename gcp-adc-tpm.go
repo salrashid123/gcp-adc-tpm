@@ -71,6 +71,7 @@ type GCPTPMConfig struct {
 	ExpireIn int
 
 	IdentityToken         bool
+	UseEKParent           bool
 	Audience              string
 	ServiceAccountEmail   string
 	Scopes                []string
@@ -118,6 +119,9 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 	parentPasswordAuth := getEnv(PARENT_PASS_VAR, "", cfg.Parentpass)
 	keyPasswordAuth := getEnv(KEY_PASS_VAR, "", cfg.Keypass)
 
+	var primaryKey *tpm2.CreatePrimaryResponse
+	var parentSession tpm2.Session
+
 	if cfg.CredentialFile != "" {
 		c, err := os.ReadFile(cfg.CredentialFile)
 		if err != nil {
@@ -127,28 +131,66 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		if err != nil {
 			return Token{}, fmt.Errorf("gcp-adc-tpm: failed decoding key: %v", err)
 		}
-		// specify its parent directly
-		primaryKey, err := tpm2.CreatePrimary{
-			PrimaryHandle: key.Parent,
-			InPublic:      tpm2.New2B(keyfile.ECCSRK_H2_Template),
-		}.Execute(rwr)
-		if err != nil {
-			return Token{}, fmt.Errorf("gcp-adc-tpm: can't create primary  %v", err)
-		}
 
-		defer func() {
-			flushContextCmd := tpm2.FlushContext{
-				FlushHandle: primaryKey.ObjectHandle,
+		// specify its parent directly
+		if cfg.UseEKParent {
+			primaryKey, err = tpm2.CreatePrimary{
+				PrimaryHandle: tpm2.TPMRHEndorsement,
+				InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
+			}.Execute(rwr)
+			if err != nil {
+				return Token{}, fmt.Errorf("can't create pimaryEK: %v", err)
 			}
-			_, _ = flushContextCmd.Execute(rwr)
-		}()
+
+			defer func() {
+				flushContextCmd := tpm2.FlushContext{
+					FlushHandle: primaryKey.ObjectHandle,
+				}
+				_, _ = flushContextCmd.Execute(rwr)
+			}()
+			var load_session_cleanup func() error
+			parentSession, load_session_cleanup, err = tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16)
+			if err != nil {
+				return Token{}, fmt.Errorf("an't load policysession : %v", err)
+			}
+			defer load_session_cleanup()
+
+			_, err = tpm2.PolicySecret{
+				AuthHandle: tpm2.AuthHandle{
+					Handle: tpm2.TPMRHEndorsement,
+					Name:   tpm2.HandleName(tpm2.TPMRHEndorsement),
+					Auth:   tpm2.PasswordAuth([]byte(cfg.Parentpass)),
+				},
+				PolicySession: parentSession.Handle(),
+				NonceTPM:      parentSession.NonceTPM(),
+			}.Execute(rwr)
+			if err != nil {
+				return Token{}, fmt.Errorf("can't create policysecret: %v", err)
+			}
+
+		} else {
+			primaryKey, err = tpm2.CreatePrimary{
+				PrimaryHandle: key.Parent,
+				InPublic:      tpm2.New2B(keyfile.ECCSRK_H2_Template),
+			}.Execute(rwr)
+			if err != nil {
+				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create primary  %v", err)
+			}
+			defer func() {
+				flushContextCmd := tpm2.FlushContext{
+					FlushHandle: primaryKey.ObjectHandle,
+				}
+				_, _ = flushContextCmd.Execute(rwr)
+			}()
+			parentSession = tpm2.PasswordAuth([]byte(parentPasswordAuth))
+		}
 
 		// now the actual key can get loaded from that parent
 		svcAccountKeyResponse, err := tpm2.Load{
 			ParentHandle: tpm2.AuthHandle{
 				Handle: primaryKey.ObjectHandle,
 				Name:   tpm2.TPM2BName(primaryKey.Name),
-				Auth:   tpm2.PasswordAuth([]byte(parentPasswordAuth)),
+				Auth:   parentSession,
 			},
 			InPublic:  key.Pubkey,
 			InPrivate: key.Privkey,
@@ -158,6 +200,43 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		}
 		svcAccountKey = svcAccountKeyResponse.ObjectHandle
 	} else {
+		if cfg.UseEKParent {
+			var err error
+			primaryKey, err = tpm2.CreatePrimary{
+				PrimaryHandle: tpm2.TPMRHEndorsement,
+				InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
+			}.Execute(rwr)
+			if err != nil {
+				return Token{}, fmt.Errorf("can't create pimaryEK: %v", err)
+			}
+
+			defer func() {
+				flushContextCmd := tpm2.FlushContext{
+					FlushHandle: primaryKey.ObjectHandle,
+				}
+				_, _ = flushContextCmd.Execute(rwr)
+			}()
+			var load_session_cleanup func() error
+			parentSession, load_session_cleanup, err = tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16)
+			if err != nil {
+				return Token{}, fmt.Errorf("an't load policysession : %v", err)
+			}
+			defer load_session_cleanup()
+
+			_, err = tpm2.PolicySecret{
+				AuthHandle: tpm2.AuthHandle{
+					Handle: tpm2.TPMRHEndorsement,
+					Name:   tpm2.HandleName(tpm2.TPMRHEndorsement),
+					Auth:   tpm2.PasswordAuth([]byte(cfg.Parentpass)),
+				},
+				PolicySession: parentSession.Handle(),
+				NonceTPM:      parentSession.NonceTPM(),
+			}.Execute(rwr)
+			if err != nil {
+				return Token{}, fmt.Errorf("can't create policysecret: %v", err)
+			}
+
+		}
 		svcAccountKey = tpm2.TPMHandle(cfg.PersistentHandle)
 	}
 	defer func() {
@@ -187,10 +266,35 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 				PCRSelect: tpm2.PCClientCompatible.PCRs(pcrList...),
 			},
 		}
-		se, err = tpmjwt.NewPCRSession(rwr, sel)
+
+		if cfg.UseEKParent {
+
+			se, err = tpmjwt.NewPCRAndDuplicateSelectSession(rwr, sel, []byte(cfg.Keypass), primaryKey.Name)
+			if err != nil {
+				return Token{}, fmt.Errorf("can't create autsession: %v", err)
+			}
+			flushContextCmd := tpm2.FlushContext{
+				FlushHandle: primaryKey.ObjectHandle,
+			}
+			_, _ = flushContextCmd.Execute(rwr)
+		} else {
+			se, err = tpmjwt.NewPCRSession(rwr, sel)
+		}
 
 	} else if keyPasswordAuth != "" {
-		se, err = tpmjwt.NewPasswordSession(rwr, []byte(keyPasswordAuth))
+
+		if cfg.UseEKParent {
+			se, err = tpmjwt.NewPolicyAuthValueAndDuplicateSelectSession(rwr, []byte(cfg.Keypass), primaryKey.Name)
+			if err != nil {
+				return Token{}, fmt.Errorf("can't create autsession: %v", err)
+			}
+			flushContextCmd := tpm2.FlushContext{
+				FlushHandle: primaryKey.ObjectHandle,
+			}
+			_, _ = flushContextCmd.Execute(rwr)
+		} else {
+			se, err = tpmjwt.NewPasswordSession(rwr, []byte(keyPasswordAuth))
+		}
 	}
 
 	if err != nil {

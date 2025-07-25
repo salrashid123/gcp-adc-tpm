@@ -30,6 +30,7 @@ var (
 	expireIn         = flag.Int("expireIn", 3600, "Token expires in seconds")
 	scopes           = flag.String("scopes", "https://www.googleapis.com/auth/cloud-platform", "comma separated scopes")
 	useOauthToken    = flag.Bool("useOauthToken", false, "Use oauth2 token instead of jwtAccessToken (default: false)")
+	useEKParent      = flag.Bool("useEKParent", false, "Use endorsement RSAKey as parent (not h2) (default: false)")
 
 	identityToken = flag.Bool("identityToken", false, "Generate google ID token (default: false)")
 	audience      = flag.String("audience", "", "Audience for the OIDC token")
@@ -89,6 +90,7 @@ func main() {
 		Keypass:               keyPasswordAuth,
 		Pcrs:                  *pcrs,
 		UseOauthToken:         *useOauthToken,
+		UseEKParent:           *useEKParent,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: Error getting credentials %v", err)
