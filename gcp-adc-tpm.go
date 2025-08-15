@@ -246,6 +246,10 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		_, _ = flushContextCmd.Execute(rwr)
 	}()
 
+	if encryptionSessionHandle != 0 {
+		encryptionSessionHandle = primaryKey.ObjectHandle
+	}
+
 	var se tpmjwt.Session
 	var err error
 	if cfg.Pcrs != "" {
@@ -269,7 +273,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 
 		if cfg.UseEKParent {
 
-			se, err = tpmjwt.NewPCRAndDuplicateSelectSession(rwr, sel, []byte(cfg.Keypass), primaryKey.Name)
+			se, err = tpmjwt.NewPCRAndDuplicateSelectSession(rwr, sel, tpm2.TPM2BDigest{Buffer: nil}, []byte(cfg.Keypass), primaryKey.Name, encryptionSessionHandle)
 			if err != nil {
 				return Token{}, fmt.Errorf("can't create autsession: %v", err)
 			}
@@ -278,13 +282,13 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			}
 			_, _ = flushContextCmd.Execute(rwr)
 		} else {
-			se, err = tpmjwt.NewPCRSession(rwr, sel)
+			se, err = tpmjwt.NewPCRSession(rwr, sel, tpm2.TPM2BDigest{Buffer: nil}, primaryKey.ObjectHandle)
 		}
 
 	} else if keyPasswordAuth != "" {
 
 		if cfg.UseEKParent {
-			se, err = tpmjwt.NewPolicyAuthValueAndDuplicateSelectSession(rwr, []byte(cfg.Keypass), primaryKey.Name)
+			se, err = tpmjwt.NewPolicyAuthValueAndDuplicateSelectSession(rwr, []byte(cfg.Keypass), primaryKey.Name, encryptionSessionHandle)
 			if err != nil {
 				return Token{}, fmt.Errorf("can't create autsession: %v", err)
 			}
@@ -293,7 +297,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			}
 			_, _ = flushContextCmd.Execute(rwr)
 		} else {
-			se, err = tpmjwt.NewPasswordSession(rwr, []byte(keyPasswordAuth))
+			se, err = tpmjwt.NewPasswordSession(rwr, []byte(keyPasswordAuth), encryptionSessionHandle)
 		}
 	}
 
