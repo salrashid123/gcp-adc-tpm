@@ -6,9 +6,12 @@ package gcptpmcredential
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"net/url"
@@ -19,12 +22,11 @@ import (
 
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
 	jwt "github.com/golang-jwt/jwt/v5"
+	tpmjwt "github.com/salrashid123/golang-jwt-tpm"
 	"golang.org/x/oauth2"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-
-	tpmjwt "github.com/salrashid123/golang-jwt-tpm"
 )
 
 type rtokenJSON struct {
@@ -249,15 +251,25 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 	var se tpmjwt.Session
 	var err error
 	if cfg.Pcrs != "" {
-		strpcrs := strings.Split(cfg.Pcrs, ",")
-		var pcrList = []uint{}
 
-		for _, i := range strpcrs {
-			j, err := strconv.Atoi(i)
-			if err != nil {
-				return Token{}, fmt.Errorf("gcp-adc-tpm:  could convert pcr value: %v", err)
+		pcrMap := make(map[uint][]byte)
+		for _, v := range strings.Split(cfg.Pcrs, ",") {
+			entry := strings.Split(v, ":")
+			if len(entry) == 2 {
+				uv, err := strconv.ParseUint(entry[0], 10, 32)
+				if err != nil {
+					return Token{}, fmt.Errorf("gcp-adc-tpm:  could parse pcr values: %v", err)
+				}
+				hexEncodedPCR, err := hex.DecodeString(strings.ToLower(entry[1]))
+				if err != nil {
+					return Token{}, fmt.Errorf("gcp-adc-tpm:  could parse pcr values: %v", err)
+				}
+				pcrMap[uint(uv)] = hexEncodedPCR
 			}
-			pcrList = append(pcrList, uint(j))
+		}
+		_, pcrList, pcrHash, err := getPCRMap(tpm2.TPMAlgSHA256, pcrMap)
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm:  could get pcrMap: %v", err)
 		}
 
 		sel := []tpm2.TPMSPCRSelection{
@@ -269,7 +281,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 
 		if cfg.UseEKParent {
 
-			se, err = tpmjwt.NewPCRAndDuplicateSelectSession(rwr, sel, []byte(cfg.Keypass), primaryKey.Name)
+			se, err = tpmjwt.NewPCRAndDuplicateSelectSession(rwr, sel, tpm2.TPM2BDigest{Buffer: pcrHash}, []byte(cfg.Keypass), primaryKey.Name, encryptionSessionHandle)
 			if err != nil {
 				return Token{}, fmt.Errorf("can't create autsession: %v", err)
 			}
@@ -278,13 +290,16 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			}
 			_, _ = flushContextCmd.Execute(rwr)
 		} else {
-			se, err = tpmjwt.NewPCRSession(rwr, sel)
+			se, err = tpmjwt.NewPCRSession(rwr, sel, tpm2.TPM2BDigest{Buffer: pcrHash}, encryptionSessionHandle)
+			if err != nil {
+				return Token{}, fmt.Errorf("gcp-adc-tpm:  could get NewPCRSession: %v", err)
+			}
 		}
 
 	} else if keyPasswordAuth != "" {
 
 		if cfg.UseEKParent {
-			se, err = tpmjwt.NewPolicyAuthValueAndDuplicateSelectSession(rwr, []byte(cfg.Keypass), primaryKey.Name)
+			se, err = tpmjwt.NewPolicyAuthValueAndDuplicateSelectSession(rwr, []byte(cfg.Keypass), primaryKey.Name, encryptionSessionHandle)
 			if err != nil {
 				return Token{}, fmt.Errorf("can't create autsession: %v", err)
 			}
@@ -293,7 +308,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			}
 			_, _ = flushContextCmd.Execute(rwr)
 		} else {
-			se, err = tpmjwt.NewPasswordSession(rwr, []byte(keyPasswordAuth))
+			se, err = tpmjwt.NewPasswordAuthSession(rwr, []byte(keyPasswordAuth), encryptionSessionHandle)
 		}
 	}
 
@@ -508,4 +523,32 @@ func getEnv(key, fallback string, fromArg string) string {
 		return value
 	}
 	return fallback
+}
+
+func getPCRMap(algo tpm2.TPMAlgID, pcrMap map[uint][]byte) (map[uint][]byte, []uint, []byte, error) {
+
+	var hsh hash.Hash
+	// https://github.com/tpm2-software/tpm2-tools/blob/83f6f8ac5de5a989d447d8791525eb6b6472e6ac/lib/tpm2_openssl.c#L206
+	if algo == tpm2.TPMAlgSHA1 {
+		hsh = sha1.New()
+	}
+	if algo == tpm2.TPMAlgSHA256 {
+		hsh = sha256.New()
+	}
+
+	if algo == tpm2.TPMAlgSHA1 || algo == tpm2.TPMAlgSHA256 {
+		for uv, v := range pcrMap {
+			pcrMap[uint(uv)] = v
+			hsh.Write(v)
+		}
+	} else {
+		return nil, nil, nil, fmt.Errorf("unknown Hash Algorithm for TPM PCRs %v", algo)
+	}
+
+	pcrs := make([]uint, 0, len(pcrMap))
+	for k := range pcrMap {
+		pcrs = append(pcrs, k)
+	}
+
+	return pcrMap, pcrs, hsh.Sum(nil), nil
 }
