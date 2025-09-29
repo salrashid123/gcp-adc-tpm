@@ -526,7 +526,18 @@ You can also derive the "name" from a public key of a known template  see [go-tp
 
 Unit test just verifies that a token is returned.  TODO is to validate the token against a gcp api (the oauth2 tokeninfo endopoint wont work because the access token is a self-signed JWT)
 
+
+Using [swtpm](https://github.com/stefanberger/swtpm)
+
 ```bash
+rm -rf /tmp/myvtpm && mkdir /tmp/myvtpm
+swtpm_setup --tpmstate /tmp/myvtpm --tpm2 --create-ek-cert
+swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear
+
+# then specify "127.0.0.1:2321"  as the TPM device path in the examples
+# and for tpm2_tools, export the following var
+export TPM2TOOLS_TCTI="swtpm:port=2321"
+
 export CICD_SA_EMAIL="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
 export CICD_SA_PEM=`cat /tmp/key_rsa.pem`
 
