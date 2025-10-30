@@ -8,6 +8,8 @@ You can see why here in the protocol itself in [AIP-4111: Self-signed JWT with S
 
 What this repo offers is a way to generate the JWT while the RSA key is embedded on a TPM and then use it to issue GCP `access_tokens`
 
+This repo also allow you to embed an mTLS certificate into a TPM for use with [GCP Workload Federation with x509 certificates](https://cloud.google.com/iam/docs/workload-identity-federation-with-x509-certificates) where the private key is either
+
 There are several ways to embed a GCP Service Account into a TPM.  
 
 1. download a Google ServiceAccount's json file and embed the private part to the TPM or
@@ -19,6 +21,14 @@ These are described here: [oauth2 TPM TokenSource](https://github.com/salrashid1
 This specific demo here will use option (1) which is the easiest but ultimately, you just need a reference handle to the TPM which all three options can provide.
 
 > *NOTE* While this repo is a CLI,  you can acquire an embedded service account's token for use with a library as an [oauth2 TPM TokenSource](https://github.com/salrashid123/oauth2/blob/master/README.md#usage-tpmtokensource)
+
+
+for mTLS certificates, the you can
+
+1. create a private key on the TPM and issue a CSR to sign by a CA 
+2. create a private key, sign it by a CA and then embed the private key on the tpm
+
+to use mTLS, you need to please see [GCP Workload Identity Federation using x509 certificates](https://github.com/salrashid123/mtls-tokensource)
 
 ---
 
@@ -46,23 +56,39 @@ as an side, you can also embed AWS credentials to hardware:
 
 You can set the following options on usage:
 
+#### Common Options
 | Option | Description |
 |:------------|-------------|
 | **`--tpm-path`** | path to the TPM device (default: `/dev/tpm0`) |
 | **`--persistentHandle`** | Persistent Handle for the HMAC key (default: `0x81010002`) |
 | **`--keyfilepath`** | Path to the TPM HMAC credential file (default: ``) |
-| **`--svcAccountEmail`** | (required) Service Account Email |
 | **`--parentPass`** | Passphrase for the owner handle (will use TPM_PARENT_AUTH env var) |
 | **`--keyPass`** | Passphrase for the key handle (will use TPM_KEY_AUTH env var) |
 | **`--pcrs`** | "PCR Bound value (increasing order, comma separated)" |
-| **`--scopes`** |  "comma separated scopes (default `https://www.googleapis.com/auth/cloud-platform`)" |
-| **`--useOauthToken`** | enable oauth2 token (default:false) |
-| **`--expireIn`** | "How many seconds the token is valid for" |
-| **`--identityToken`** |  Generate Google OIDC token |
-| **`--audience`** |  Audience for the id_token |
 | **`--rawOutput`** |  Return just the token, nothing else |
 | **`--useEKParent`** | Use endorsement RSAKey as parent (default: false) |
 | **`--tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session |
+
+#### Oauth2 Options
+
+| Option | Description |
+| **`--useOauthToken`** | enable oauth2 token (default:false) |
+| **`--svcAccountEmail`** | (required) Service Account Email |
+| **`--identityToken`** |  Generate Google OIDC token |
+| **`--audience`** |  Audience for the id_token |
+| **`--scopes`** |  "comma separated scopes (default `https://www.googleapis.com/auth/cloud-platform`)" |
+| **`--expireIn`** | "How many seconds the token is valid for" |
+
+
+#### mTLS Options
+
+| Option | Description |
+| **`--useMTLS`** | Use mtls workload federation(default: false) |
+| **`--projectNumber`** | Project Number for mTLS (default: ) |
+| **`--poolID`** | workload identity pool id for mTLS (default: ) |
+| **`--providerID`** | workload identity pool id for mTLS (default: ) |
+| **`--pubCert`** | workload identity public certificate for mTLS (default: ) |
+
 
 ### Setup
 
@@ -494,6 +520,27 @@ go run cmd/main.go \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
      --useEKParent --pcrs=23 --tpm-path=127.0.0.1:2341 --persistentHandle 0x81008001 \
        --tpm-path=127.0.0.1:2341
+```
+
+### mTLS Workload Identify Federation
+
+To use mTLS, you need to have a private key on the TPM and then issue a trusted certificate to use with that key.
+
+You can set this up by following both
+
+* [mtls TokenSource](https://github.com/salrashid123/mtls-tokensource)
+
+you can generate a key on the tpm and issue a CSR following the partial instructions [here](https://github.com/salrashid123/oauth2?tab=readme-ov-file#b-generate-key-on-tpm-and-export-public-x509-certificate-to-gcp)
+
+
+then run as 
+
+```bash
+$ go run cmd/main.go -useMTLS \
+    --keyfilepath=workload-key.pem  \
+        --projectNumber=$PROJECT_NUMBER  \
+           --poolID=$POOL_ID --providerID=$PROVIDER_ID   \
+             --pubCert=workload-certificate.crt --tpm-path=$TPMA
 ```
 
 

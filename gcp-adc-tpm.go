@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
+	tpmmtls "github.com/salrashid123/mtls-tokensource/tpm"
 )
 
 type rtokenJSON struct {
@@ -82,6 +84,12 @@ type GCPTPMConfig struct {
 	Keypass               string
 	Pcrs                  string
 	UseOauthToken         bool // enables oauth2 token (default: false)
+
+	UseMTLS       bool
+	ProjectNumber string
+	PoolID        string
+	ProviderID    string
+	Certificate   *x509.Certificate
 }
 
 var ()
@@ -317,6 +325,27 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 	}
 
 	// now we're ready to sign
+
+	if cfg.UseMTLS {
+		ts, err := tpmmtls.TpmMTLSTokenSource(&tpmmtls.TpmMtlsTokenConfig{
+			TPMDevice:       cfg.TPMCloser,
+			Handle:          svcAccountKey,
+			Audience:        fmt.Sprintf("//iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/providers/%s", cfg.ProjectNumber, cfg.PoolID, cfg.ProviderID),
+			X509Certificate: cfg.Certificate,
+		})
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)
+		}
+		tok, err := ts.Token()
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)
+		}
+		return Token{
+			AccessToken: tok.AccessToken,
+			ExpiresIn:   tok.ExpiresIn,
+			TokenType:   tok.TokenType,
+		}, nil
+	}
 
 	if cfg.IdentityToken {
 		if cfg.Audience == "" {
