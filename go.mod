@@ -7,6 +7,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/go-tpm v0.9.5
 	github.com/salrashid123/golang-jwt-tpm v1.8.95
+	github.com/salrashid123/mtls-tokensource/tpm v0.0.54
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/oauth2 v0.30.0
 )
@@ -16,9 +17,6 @@ require (
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
-	github.com/salrashid123/mtls-tokensource v0.0.52 // indirect
-	github.com/salrashid123/mtls-tokensource/tpm v0.0.53 // indirect
-	github.com/salrashid123/signer v0.9.0 // indirect
 	github.com/salrashid123/tpmsigner v0.9.82 // indirect
 	golang.org/x/crypto v0.40.0 // indirect
 	golang.org/x/net v0.41.0 // indirect

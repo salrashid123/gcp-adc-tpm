@@ -532,15 +532,54 @@ You can set this up by following both
 
 you can generate a key on the tpm and issue a CSR following the partial instructions [here](https://github.com/salrashid123/oauth2?tab=readme-ov-file#b-generate-key-on-tpm-and-export-public-x509-certificate-to-gcp)
 
+So if you have setup workload mtls where your CA issued certificates represent service identities, the following will generate a key on the TPM and then issue a CSR.  Your CA will use this CSR to issue a certifiate.
 
-then run as 
 
 ```bash
-$ go run cmd/main.go -useMTLS \
-    --keyfilepath=workload-key.pem  \
+export PROJECT_ID=`gcloud config get-value core/project`
+export PROJECT_NUMBER=`gcloud projects describe $PROJECT_ID --format='value(projectNumber)'`
+export POOL_ID="cert-pool-1"
+export WORKLOAD_CN="workload-adc-1"
+export PROVIDER_ID="cert-provider-adc"
+
+export TPM2TOOLS_TCTI="swtpm:port=2321"
+export TPM2OPENSSL_TCTI="swtpm:port=2321"
+export TPM2TSSENGINE_TCTI="swtpm:port=2321"
+
+printf '\x00\x00' > unique.dat
+tpm2_createprimary -C o -G ecc  -g sha256 \
+   -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
+
+tpm2_create -G rsa2048:rsapss:null  -g sha256 -u key.pub -r key.priv -C primary.ctx
+tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+tpm2_load -C primary.ctx -u key.pub -r key.priv -c key.ctx
+tpm2_evictcontrol -C o -c key.ctx 0x81010002
+
+### extract the publicKey PEM
+tpm2_readpublic -c key.ctx -f PEM -o workload_1_public.pem
+tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+
+## convert the entire TPM public/private key to PEM
+## you may need to add a -p if your tpm2 tools is not recent (see https://github.com/tpm2-software/tpm2-tools/issues/3458)
+tpm2_encodeobject -C primary.ctx -u key.pub -r key.priv -o workload_1_key.pem
+
+tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+
+### issue the CSR
+openssl req  -provider tpm2  -provider default  -new -key workload_1_key.pem -out workload_1_csr.pem \
+    -subj "/C=US/O=Google/OU=Enterprise/CN=$WORKLOAD_CN"
+
+### now get the CSR signed by a CA which you've configured workload identify federation.
+
+### once you have the Certificate,
+
+export TPMA="127.0.0.1:2321"
+
+go run cmd/main.go -useMTLS \
+    --keyfilepath=workload_1_key.key  \
         --projectNumber=$PROJECT_NUMBER  \
            --poolID=$POOL_ID --providerID=$PROVIDER_ID   \
-             --pubCert=workload-certificate.crt --tpm-path=$TPMA
+             --pubCert=workload_1_crt.pem --tpm-path=$TPMA
 ```
 
 

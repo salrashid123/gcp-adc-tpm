@@ -340,9 +340,12 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		if err != nil {
 			return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)
 		}
+
+		secondsDiff := int(time.Until(tok.Expiry).Seconds())
+
 		return Token{
 			AccessToken: tok.AccessToken,
-			ExpiresIn:   tok.ExpiresIn,
+			ExpiresIn:   int64(secondsDiff),
 			TokenType:   tok.TokenType,
 		}, nil
 	}
