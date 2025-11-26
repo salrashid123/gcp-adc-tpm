@@ -57,6 +57,7 @@ as an side, you can also embed AWS credentials to hardware:
 You can set the following options on usage:
 
 #### Common Options
+
 | Option | Description |
 |:------------|-------------|
 | **`--tpm-path`** | path to the TPM device (default: `/dev/tpm0`) |
@@ -72,6 +73,7 @@ You can set the following options on usage:
 #### Oauth2 Options
 
 | Option | Description |
+|:------------|-------------|
 | **`--useOauthToken`** | enable oauth2 token (default:false) |
 | **`--svcAccountEmail`** | (required) Service Account Email |
 | **`--identityToken`** |  Generate Google OIDC token |
@@ -83,6 +85,7 @@ You can set the following options on usage:
 #### mTLS Options
 
 | Option | Description |
+|:------------|-------------|
 | **`--useMTLS`** | Use mtls workload federation(default: false) |
 | **`--projectNumber`** | Project Number for mTLS (default: ) |
 | **`--poolID`** | workload identity pool id for mTLS (default: ) |
@@ -99,6 +102,7 @@ On your laptop, run
 ```bash
 export PROJECT_ID=`gcloud config get-value core/project`
 gcloud iam service-accounts create tpm-sa --display-name "TPM Service Account"
+
 export SERVICE_ACCOUNT_EMAIL=tpm-sa@$PROJECT_ID.iam.gserviceaccount.com
 gcloud iam service-accounts keys create tpm-svc-account.json --iam-account=$SERVICE_ACCOUNT_EMAIL
 ```
