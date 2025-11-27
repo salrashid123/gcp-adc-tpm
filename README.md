@@ -44,7 +44,7 @@ to use mTLS, you need to please see [GCP Workload Identity Federation using x509
 * [mTLS with TPM bound private key](https://github.com/salrashid123/go_tpm_https_embed)
 * [TPM Remote Attestation protocol using go-tpm and gRPC](https://github.com/salrashid123/go_tpm_remote_attestation)
 * [golang-jwt for Trusted Platform Module (TPM)](https://github.com/salrashid123/golang-jwt-tpm)
-* [TPM based TLS using Attested Keys](https://github.com/salrashid123/tls_ak)
+* [tpmcopy: Transfer RSA|ECC|AES|HMAC key to a remote Trusted Platform Module (TPM)](https://github.com/salrashid123/tpmcopy)
 
 as an side, you can also embed AWS credentials to hardware:
 
