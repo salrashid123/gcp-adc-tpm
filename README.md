@@ -2,15 +2,13 @@
 
 Binary that just returns a Service Accounts `access_token` for use with GCP Credential Libraries where the key is accessed using direct calls to a `Trusted Platform Module` (TPM).
 
-While not running on a GCP platform like GCE, Cloud Run, GCF or GKE, `Service Account` authentication usually (with exception of workload federation) requires direct access to its RSA Private key.. 
+While not running on a GCP platform like GCE, Cloud Run, GCF or GKE, `Service Account` authentication usually (with exception of workload federation or impersonation) requires direct access to its RSA Private key.. 
 
-You can see why here in the protocol itself in [AIP-4111: Self-signed JWT with Scopes](https://google.aip.dev/auth/4111).  Basically service account authentication involves locally signing a JWT and using that directly as an  `access_token`.
-
-What this repo offers two way to generate the JWT while the RSA key is embedded on a TPM and then use it to issue GCP `access_tokens`
+What this repo offers two ways to generate the `access_token` while the RSA service account or mtls key is embedded on a TPM and then use it to issue GCP `access_tokens`
 
 #### ServiceAccount Key
 
-This repo also allow you to embed an mTLS certificate into a TPM for use with [GCP Workload Federation with x509 certificates](https://cloud.google.com/iam/docs/workload-identity-federation-with-x509-certificates) where the private key is either
+The protocol itself for service account authentication is described in [AIP-4111: Self-signed JWT with Scopes](https://google.aip.dev/auth/4111).  Basically service account authentication involves locally signing a JWT and using that directly as an  `access_token`.
 
 There are several ways to embed a GCP Service Account into a TPM.  
 
@@ -25,6 +23,8 @@ This specific demo here will use option (1) which is the easiest but ultimately,
 > *NOTE* While this repo is a CLI,  you can acquire an embedded service account's token for use with a library as an [oauth2 TPM TokenSource](https://github.com/salrashid123/oauth2/blob/master/README.md#usage-tpmtokensource)
 
 #### WorkloadFederation mTLS
+
+This repo also allow you to embed an mTLS certificate into a TPM for use with [GCP Workload Federation with x509 certificates](https://cloud.google.com/iam/docs/workload-identity-federation-with-x509-certificates).
 
 for mTLS certificates, the you can
 
