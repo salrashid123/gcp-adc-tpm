@@ -6,7 +6,9 @@ While not running on a GCP platform like GCE, Cloud Run, GCF or GKE, `Service Ac
 
 You can see why here in the protocol itself in [AIP-4111: Self-signed JWT with Scopes](https://google.aip.dev/auth/4111).  Basically service account authentication involves locally signing a JWT and using that directly as an  `access_token`.
 
-What this repo offers is a way to generate the JWT while the RSA key is embedded on a TPM and then use it to issue GCP `access_tokens`
+What this repo offers two way to generate the JWT while the RSA key is embedded on a TPM and then use it to issue GCP `access_tokens`
+
+#### ServiceAccount Key
 
 This repo also allow you to embed an mTLS certificate into a TPM for use with [GCP Workload Federation with x509 certificates](https://cloud.google.com/iam/docs/workload-identity-federation-with-x509-certificates) where the private key is either
 
@@ -22,6 +24,7 @@ This specific demo here will use option (1) which is the easiest but ultimately,
 
 > *NOTE* While this repo is a CLI,  you can acquire an embedded service account's token for use with a library as an [oauth2 TPM TokenSource](https://github.com/salrashid123/oauth2/blob/master/README.md#usage-tpmtokensource)
 
+#### WorkloadFederation mTLS
 
 for mTLS certificates, the you can
 
@@ -36,9 +39,10 @@ to use mTLS, you need to please see [GCP Workload Identity Federation using x509
 
 * [Trusted Platform Module (TPM) recipes with tpm2_tools and go-tpm](https://github.com/salrashid123/tpm2)
 * [GCP golang TPMTokenSource](https://github.com/salrashid123/oauth2/blob/master/README.md#usage-tpmtokensource)
+* [Python: Cloud Auth Library using Trusted Platform Module (TPM)](https://pypi.org/project/cloud-auth-tpm/)
+* [TPM: GCP Workload Identity Federation using x509 certificates](https://github.com/salrashid123/mtls-tokensource)
 * [mTLS with TPM bound private key](https://github.com/salrashid123/go_tpm_https_embed)
 * [TPM Remote Attestation protocol using go-tpm and gRPC](https://github.com/salrashid123/go_tpm_remote_attestation)
-* [Sealing RSA and Symmetric keys with GCP vTPMs](https://github.com/salrashid123/gcp_tpm_sealed_keys)
 * [golang-jwt for Trusted Platform Module (TPM)](https://github.com/salrashid123/golang-jwt-tpm)
 * [TPM based TLS using Attested Keys](https://github.com/salrashid123/tls_ak)
 
@@ -373,16 +377,6 @@ swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctr
 ## in new window
 export TPM2TOOLS_TCTI="swtpm:port=2321"
 
-
-## TPM B
-rm -rf /tmp/myvtpm2 && mkdir /tmp/myvtpm2
-/usr/share/swtpm/swtpm-create-user-config-files
-swtpm_setup --tpmstate /tmp/myvtpm2 --tpm2 --create-ek-cert
-swtpm socket --tpmstate dir=/tmp/myvtpm2 --tpm2 --server type=tcp,port=2341 --ctrl type=tcp,port=2342 --flags not-need-init,startup-clear --log level=2
-
-## in new window
-export TPM2TOOLS_TCTI="swtpm:port=2341"
-
 tpm2_flushcontext -t &&  tpm2_flushcontext -s  &&  tpm2_flushcontext -l
 ```
 
@@ -392,50 +386,47 @@ With service account key saved as PEM key file
 
 ```bash
 export TPMA="127.0.0.1:2321"
-export TPMB="127.0.0.1:2341"
-
 export TPM2TOOLS_TCTI="swtpm:port=2321"
-export TPM2TOOLS_TCTI="swtpm:port=2341"
 
-### TPM-B
-tpmcopy --mode publickey --parentKeyType=rsa -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMB
-### copy public.pem to TPM-A
+tpmcopy --mode publickey --parentKeyType=rsa_ek -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMA
 
+###  copy public.pem to Local
+
+### local
+tpmcopy --mode duplicate --keyType=rsa --secret=/tmp/key_rsa.pem --rsaScheme=rsassa \
+ --hashScheme=sha256 --password=bar -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json
+
+###  copy /tmp/out.json to TPM-A
 ### TPM-A
-tpmcopy --mode duplicate  --secret=/tmp/key_rsa.pem --keyType=rsa \
-   --password=bar -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json --tpm-path=$TPMA
-
-### copy out.json to TPM-B
-### TPM-B
-tpmcopy --mode import --parentKeyType=rsa --in=/tmp/out.json --out=/tmp/tpmkey.pem --parent=0x81008000 --tpm-path=$TPMB
+tpmcopy --mode import --parentKeyType=rsa_ek --in=/tmp/out.json --out=/tmp/tpmkey.pem  --tpm-path=$TPMA
 
 ### run 
 go run cmd/main.go  --keyfilepath=/tmp/tpmkey.pem \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-     --useEKParent --keyPass=bar --tpm-path=127.0.0.1:2341
+     --useEKParent --keyPass=bar --tpm-path=127.0.0.1:2321
 ```
 
 With service account key saved as a `PersistentHandle`
 
 ```bash
-### TPM-B
-tpmcopy --mode publickey --parentKeyType=rsa -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMB
-### copy public.pem to TPM-A
+tpmcopy --mode publickey --parentKeyType=rsa_ek -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMA
 
+###  copy public.pem to Local
+
+### local
+tpmcopy --mode duplicate --keyType=rsa --secret=/tmp/key_rsa.pem --rsaScheme=rsassa \
+ --hashScheme=sha256 --password=bar -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json
+
+###  copy /tmp/out.json to TPM-A
 ### TPM-A
-tpmcopy --mode duplicate  --secret=/tmp/key_rsa.pem --keyType=rsa \
-   --password=bar -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json --tpm-path=$TPMA
-
-### copy out.json to TPM-B
-### TPM-B
-tpmcopy --mode import --parentKeyType=rsa \
+tpmcopy --mode import --parentKeyType=rsa_ek \
  --in=/tmp/out.json --out=/tmp/tpmkey.pem \
  --pubout=/tmp/pub.dat --privout=/tmp/priv.dat \
-  --parent=0x81008000 --tpm-path=$TPMB
+  --parent=0x81008000 --tpm-path=$TPMA
 
 tpmcopy --mode evict \
     --persistentHandle=0x81008001 \
-   --in=/tmp/tpmkey.pem --tpm-path=$TPMB
+   --in=/tmp/tpmkey.pem --tpm-path=$TPMA
 
 # tpm2_createek -c ek.ctx -G rsa -u ek.pub 
 # tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
@@ -448,7 +439,7 @@ tpmcopy --mode evict \
 ### run 
 go run cmd/main.go  --keyfilepath=/tmp/tpmkey.pem \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-     --useEKParent --keyPass=bar --persistentHandle 0x81008001 --tpm-path=127.0.0.1:2341
+     --useEKParent --keyPass=bar --persistentHandle 0x81008001 --tpm-path=127.0.0.1:2321
 ```
 
 * PCR Policy
@@ -468,47 +459,50 @@ $ tpm2_pcrread sha256:23
 With service account key saved as PEM key file
 
 ```bash
-### TPM-B
-tpmcopy --mode publickey --parentKeyType=rsa -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMB
-### copy public.pem to TPM-A
+### TPM-A
+tpmcopy --mode publickey --parentKeyType=rsa_ek -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMA
+
+### copy public.pem to local
+
+### local
+tpmcopy --mode duplicate --keyType=rsa --secret=/tmp/key_rsa.pem --rsaScheme=rsassa \
+ --hashScheme=sha256 --pcrValues=23:f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b \
+  -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json
+
+### copy out.json to TPM-A
 
 ### TPM-A
-tpmcopy --mode duplicate --keyType=rsa    --secret=/tmp/key_rsa.pem \
-     --pcrValues=23:f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b  \
-      -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json --tpm-path=$TPMA
-### copy out.json to TPM-B
-
-### TPM-B
-tpmcopy --mode import --parentKeyType=rsa --in=/tmp/out.json --out=/tmp/tpmkey.pem --tpm-path=$TPMB
+tpmcopy --mode import --parentKeyType=rsa_ek --in=/tmp/out.json --out=/tmp/tpmkey.pem --tpm-path=$TPMA
 
 ### run 
 go run cmd/main.go  --keyfilepath=/tmp/tpmkey.pem \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-     --useEKParent --pcrs=23 --tpm-path=127.0.0.1:2341
+     --useEKParent --pcrs=23 --tpm-path=127.0.0.1:2321
 ```
 
 With service account key saved as a `PersistentHandle`
 
 ```bash
-### TPM-B
-tpmcopy --mode publickey --parentKeyType=rsa -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMB
+### TPM-A
+tpmcopy --mode publickey --parentKeyType=rsa_ek -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMA
+
 ### copy public.pem to TPM-A
 
 ### TPM-A
-tpmcopy --mode duplicate --keyType=rsa    --secret=/tmp/key_rsa.pem \
-     --pcrValues=23:f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b  \
-      -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json --tpm-path=$TPMA
+tpmcopy --mode duplicate --keyType=rsa --secret=/tmp/key_rsa.pem --rsaScheme=rsassa \
+ --hashScheme=sha256 --pcrValues=23:f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b \
+  -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json
 
 ### copy out.json to TPM-B
 ### TPM-B
-tpmcopy --mode import --parentKeyType=rsa \
- --in=/tmp/out.json --out=/tmp/tpmkey.pem \
- --pubout=/tmp/pub.dat --privout=/tmp/priv.dat \
-  --parent=0x81008000 --tpm-path=$TPMB
+
+tpmcopy --mode import --parentKeyType=rsa_ek --in=/tmp/out.json \
+  --parent=0x81008000 --out=/tmp/tpmkey.pem --tpm-path=$TPMA
+
 
 tpmcopy --mode evict \
     --persistentHandle=0x81008001 \
-   --in=/tmp/tpmkey.pem --tpm-path=$TPMB
+   --in=/tmp/tpmkey.pem --tpm-path=$TPMA
 
 ### or using tpm2_tools:
 # tpm2_createek -c ek.ctx -G rsa -u ek.pub 
@@ -523,7 +517,7 @@ tpmcopy --mode evict \
 go run cmd/main.go \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
      --useEKParent --pcrs=23 --tpm-path=127.0.0.1:2341 --persistentHandle 0x81008001 \
-       --tpm-path=127.0.0.1:2341
+       --tpm-path=127.0.0.1:2321
 ```
 
 ### mTLS Workload Identify Federation
