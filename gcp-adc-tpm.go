@@ -26,9 +26,11 @@ import (
 	tpmjwt "github.com/salrashid123/golang-jwt-tpm"
 	"golang.org/x/oauth2"
 
+	credentials "cloud.google.com/go/iam/credentials/apiv1"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	tpmmtls "github.com/salrashid123/mtls-tokensource/tpm"
+	credentialspb "google.golang.org/genproto/googleapis/iam/credentials/v1"
 )
 
 type rtokenJSON struct {
@@ -327,27 +329,57 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 	// now we're ready to sign
 
 	if cfg.UseMTLS {
-		ts, err := tpmmtls.TpmMTLSTokenSource(&tpmmtls.TpmMtlsTokenConfig{
-			TPMDevice:       cfg.TPMCloser,
-			Handle:          svcAccountKey,
-			Audience:        fmt.Sprintf("//iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/providers/%s", cfg.ProjectNumber, cfg.PoolID, cfg.ProviderID),
-			X509Certificate: cfg.Certificate,
-		})
-		if err != nil {
-			return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)
-		}
-		tok, err := ts.Token()
-		if err != nil {
-			return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)
-		}
+		if cfg.IdentityToken {
 
-		secondsDiff := int(time.Until(tok.Expiry).Seconds())
+			if cfg.ServiceAccountEmail == "" || cfg.Audience == "" {
+				return Token{}, fmt.Errorf("gcp-adc-tpm: both serviceAccountEmail and Audience must be specified for id_tokens")
+			}
 
-		return Token{
-			AccessToken: tok.AccessToken,
-			ExpiresIn:   int64(secondsDiff),
-			TokenType:   tok.TokenType,
-		}, nil
+			ctx := context.Background()
+			c, err := credentials.NewIamCredentialsClient(ctx)
+			if err != nil {
+				return Token{}, fmt.Errorf("gcp-adc-tpm: error  creatubg IAM Client: %v", err)
+			}
+			defer c.Close()
+
+			idreq := &credentialspb.GenerateIdTokenRequest{
+				Name:         fmt.Sprintf("projects/-/serviceAccounts/%s", cfg.ServiceAccountEmail),
+				Audience:     cfg.Audience,
+				IncludeEmail: true,
+			}
+			idresp, err := c.GenerateIdToken(ctx, idreq)
+			if err != nil {
+				return Token{}, fmt.Errorf("gcp-adc-tpm: error  getting id_token: %v", err)
+			}
+			secondsDiff := 3600
+			return Token{
+				AccessToken: idresp.Token,
+				ExpiresIn:   int64(secondsDiff),
+				TokenType:   "Bearer",
+			}, nil
+		} else {
+			ts, err := tpmmtls.TpmMTLSTokenSource(&tpmmtls.TpmMtlsTokenConfig{
+				TPMDevice:       cfg.TPMCloser,
+				Handle:          svcAccountKey,
+				Audience:        fmt.Sprintf("//iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/providers/%s", cfg.ProjectNumber, cfg.PoolID, cfg.ProviderID),
+				X509Certificate: cfg.Certificate,
+			})
+			if err != nil {
+				return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)
+			}
+			tok, err := ts.Token()
+			if err != nil {
+				return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)
+			}
+
+			secondsDiff := int(time.Until(tok.Expiry).Seconds())
+
+			return Token{
+				AccessToken: tok.AccessToken,
+				ExpiresIn:   int64(secondsDiff),
+				TokenType:   tok.TokenType,
+			}, nil
+		}
 	}
 
 	if cfg.IdentityToken {

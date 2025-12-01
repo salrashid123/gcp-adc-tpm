@@ -634,6 +634,7 @@ go run cmd/main.go -useMTLS \
              --pubCert=workload_1_crt.pem --tpm-path=$TPMA
 ```
 
+If you want an `id_token`, you need to enable impersonation.  See [Authenticating using Workload Identity Federation to Cloud Run, Cloud Functions](https://github.com/salrashid123/workload_federation_cloudrun_gcf).  Note that the id_token and default access_token when using workload federation represent *different* principals.  Possible TODO: add flag to return both the access and id_token which ultimately is the same impersonated service account.
 
 ### Encrypted TPM Sessions
 
