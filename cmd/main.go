@@ -67,6 +67,10 @@ func openTPM(path string) (io.ReadWriteCloser, error) {
 }
 
 func main() {
+	os.Exit(run()) // since defer func() needs to get called first
+}
+
+func run() int {
 
 	flag.Parse()
 
@@ -75,7 +79,7 @@ func main() {
 		fmt.Printf("Version: %s\n", Tag)
 		fmt.Printf("Date: %s\n", Date)
 		fmt.Printf("Commit: %s\n", Commit)
-		os.Exit(0)
+		return 0
 	}
 
 	parentPasswordAuth := getEnv(parent_pass_var, "", *parentPass)
@@ -84,28 +88,30 @@ func main() {
 	rwr, err := openTPM(*tpmPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gcp-tpm-process-credential: Error opening TPM %v", err)
-		os.Exit(1)
+		return 1
 	}
+	defer rwr.Close()
 
 	var cert *x509.Certificate
 	if *useMTLS {
 		certPEMBlock, err := os.ReadFile(*pubCert)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "gcp-tpm-process-credential:failed to read certificate file: %v", err)
+			return 1
 		}
 
 		// Decode the PEM block
 		block, _ := pem.Decode(certPEMBlock)
 		if block == nil || block.Type != "CERTIFICATE" {
 			fmt.Fprintf(os.Stderr, "gcp-tpm-process-credential: failed to decode PEM block as certificate")
-			os.Exit(1)
+			return 1
 		}
 
 		// Parse the X.509 certificate
 		cert, err = x509.ParseCertificate(block.Bytes)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "gcp-tpm-process-credential:  failed to parse certificate: %v", err)
-			os.Exit(1)
+			return 1
 		}
 	}
 
@@ -134,18 +140,19 @@ func main() {
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gcp-tpm-process-credential: Error getting credentials %v", err)
-		os.Exit(1)
+		return 1
 	}
 	if *rawOutput {
 		fmt.Println(resp.AccessToken)
-		return
+		return 0
 	}
 	m, err := json.Marshal(resp)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gcp-tpm-process-credential: Error marshalling processCredential output %v", err)
-		os.Exit(1)
+		return 1
 	}
 	fmt.Println(string(m))
+	return 0
 }
 
 func getEnv(key, fallback string, fromArg string) string {

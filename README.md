@@ -13,23 +13,23 @@ The protocol itself for service account authentication is described in [AIP-4111
 There are several ways to embed a GCP Service Account into a TPM.  
 
 1. download a Google ServiceAccount's json file and embed the private part to the TPM or
-2. Generate a Key ON THE TPM and then import the public part to GCP. or
+2. Generate a Key _on the TPM_ and then import the public part to GCP
 3. remote seal the service accounts RSA Private key remotely, encrypt it with the remote TPM's Endorsement Key and load it
 
-These are described here: [oauth2 TPM TokenSource](https://github.com/salrashid123/oauth2/blob/master/README.md#usage-tpmtokensource)
+These are described here: [oauth2 TPM TokenSource](https://github.com/salrashid123/oauth2?tab=readme-ov-file#usage)
 
 This specific demo here will use option (1) which is the easiest but ultimately, you just need a reference handle to the TPM which all three options can provide.
 
 > *NOTE* While this repo is a CLI,  you can acquire an embedded service account's token for use with a library as an [oauth2 TPM TokenSource](https://github.com/salrashid123/oauth2/blob/master/README.md#usage-tpmtokensource)
 
-#### WorkloadFederation mTLS
+#### Workload Identity Federation mTLS
 
 This repo also allow you to embed an mTLS certificate into a TPM for use with [GCP Workload Federation with x509 certificates](https://cloud.google.com/iam/docs/workload-identity-federation-with-x509-certificates).
 
 for mTLS certificates, the you can
 
 1. create a private key on the TPM and issue a CSR to sign by a CA 
-2. create a private key, sign it by a CA and then embed the private key on the tpm
+2. create a private key, sign it by a CA and then embed the private key on the TPM
 
 to use mTLS, you need to please see [GCP Workload Identity Federation using x509 certificates](https://github.com/salrashid123/mtls-tokensource)
 
@@ -69,7 +69,7 @@ You can set the following options on usage:
 | **`--keyfilepath`** | Path to the TPM HMAC credential file (default: ``) |
 | **`--parentPass`** | Passphrase for the owner handle (will use TPM_PARENT_AUTH env var) |
 | **`--keyPass`** | Passphrase for the key handle (will use TPM_KEY_AUTH env var) |
-| **`--pcrs`** | "PCR Bound value (increasing order, comma separated)" |
+| **`--pcrs`** | "PCR Bound slot:value (increasing order, comma separated)" |
 | **`--rawOutput`** |  Return just the token, nothing else |
 | **`--useEKParent`** | Use endorsement RSAKey as parent (default: false) |
 | **`--tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session |
@@ -78,13 +78,12 @@ You can set the following options on usage:
 
 | Option | Description |
 |:------------|-------------|
-| **`--useOauthToken`** | enable oauth2 token (default:false) |
+| **`--useOauthToken`** | issue oauth2 token (default:false) |
 | **`--svcAccountEmail`** | (required) Service Account Email |
 | **`--identityToken`** |  Generate Google OIDC token |
 | **`--audience`** |  Audience for the id_token |
 | **`--scopes`** |  "comma separated scopes (default `https://www.googleapis.com/auth/cloud-platform`)" |
 | **`--expireIn`** | "How many seconds the token is valid for" |
-
 
 #### mTLS Options
 
@@ -95,7 +94,6 @@ You can set the following options on usage:
 | **`--poolID`** | workload identity pool id for mTLS (default: ) |
 | **`--providerID`** | workload identity pool id for mTLS (default: ) |
 | **`--pubCert`** | workload identity public certificate for mTLS (default: ) |
-
 
 ### Setup
 
@@ -125,7 +123,8 @@ openssl rsa -in /tmp/f.json -out /tmp/key_rsa.pem
 
 ## if you want to test using a software TPM instead:
 ##  rm -rf /tmp/myvtpm && mkdir /tmp/myvtpm
-##  sudo swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear
+##  swtpm_setup --tpmstate /tmp/myvtpm --tpm2 --create-ek-cert
+##  swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear --log level=5
 ##  export TPM2TOOLS_TCTI="swtpm:port=2321"
 
 ## create the primary
@@ -191,13 +190,13 @@ On the machine with the TPM, specify the `PROJECT_ID` and the default persistent
 You can either build the binary or acquire it from the `Releases` page
 
 ```bash
-CGO_ENABLED=0 go build -o gcp-adc-tpm cmd/main.go
+go build -o gcp-adc-tpm cmd/main.go
 
 # with persistentHandle
-./gcp-adc-tpm --persistentHandle=0x81010002 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
+gcp-adc-tpm --persistentHandle=0x81010002 --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
 
 # with keyfile
-./gcp-adc-tpm --keyfilepath=/path/to/private.pem --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
+gcp-adc-tpm --keyfilepath=/path/to/private.pem --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
 
 
 {
@@ -238,7 +237,7 @@ The default token this utility returns is a `JWT AccessToken with Scopes` descri
 If you want to acquire an actual oauth2 token as described [here](https://developers.google.com/identity/protocols/oauth2#serviceaccount) request, then just set `--useOauthToken` flag
 
 ```bash
-./gcp-adc-tpm --keyfilepath=/path/to/private.pem \
+gcp-adc-tpm --keyfilepath=/path/to/private.pem \
    --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com -useOauthToken 
 ```
 
@@ -247,7 +246,7 @@ If you want to acquire an actual oauth2 token as described [here](https://develo
 This uitlity can also genrate [GCP OIDC TOken](https://github.com/salrashid123/google_id_token) using the TPM based key.
 
 ```bash
-./gcp-adc-tpm   --keyfilepath=/path/to/private.pem  \
+gcp-adc-tpm   --keyfilepath=/path/to/private.pem  \
      --audience=foo --identityToken --serviceAccountEmail=tpm-sa@$PROJECT_ID.iam.gserviceaccount.com \
 ```
 
@@ -270,14 +269,16 @@ tpm2_flushcontext  -t
 tpm2_load -C primary.ctx -u key.pub -r key.prv -c key.ctx 
 
 tpm2_evictcontrol -C o -c key.ctx 0x81010002
+tpm2_encodeobject -C primary.ctx -u key.pub -r key.prv -o private.pem
 tpm2_flushcontext  -t
 ```
 
 Then run it and specify the pcr back to construct the policy against:
 
 ```bash
-./gcp-adc-tpm --persistentHandle=0x81010002  \
-   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" --pcrs=23 
+gcp-adc-tpm --persistentHandle=0x81010002  \
+   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+    --pcrs=23:0000000000000000000000000000000000000000000000000000000000000000
 ```
 
 to test the negative, you can alter the PCR value.  For me it was
@@ -292,11 +293,25 @@ $ tpm2_pcrextend 23:sha256=0xC78009FDF07FC56A11F122370658A353AAA542ED63E44C4BC15
 
 So now try to get an access token, you'll see an error:
 
-```bash
-./gcp-adc-tpm --persistentHandle=0x81010002  \
-   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" --pcrs=23 
+The following means the claimed pcr value in `--pcrs=` switch do not match what is current set on the PCR=23
 
-Error signing tpmjwt: can't Sign: TPM_RC_POLICY_FAIL (session 1): a policy check failedexit status 1
+```bash
+gcp-adc-tpm --persistentHandle=0x81010002  \
+   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+    --pcrs=23:0000000000000000000000000000000000000000000000000000000000000000
+
+  gcp-tpm-process-credential: Error getting credentials gcp-adc-tpm: Error signing tpmjwt: error getting session TPM_RC_VALUE (parameter 1): value is out of range or is not correct for the contextexit status 1
+```
+
+The following means the claimed pcr value in `--pcrs=` does match what is current set on the PCR=23 but the key itself used a different value in binding policy
+
+```bash
+gcp-adc-tpm --persistentHandle=0x81010002  \
+   --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+    --pcrs=23:C78009FDF07FC56A11F122370658A353AAA542ED63E44C4BC15FF4CD105AB33C
+
+  gcp-tpm-process-credential: Error getting credentials gcp-adc-tpm: Error signing tpmjwt: can't Sign: TPM_RC_POLICY_FAIL (session 1): a policy check failedexit status 1
+
 ```
 
 ### Password Policy
@@ -312,13 +327,14 @@ tpm2_flushcontext  -t
 tpm2_load -C primary.ctx -u key.pub -r key.prv -c key.ctx 
 
 tpm2_evictcontrol -C o -c key.ctx 0x81010002
+tpm2_encodeobject -C primary.ctx -u key.pub -r key.prv -o private.pem
 tpm2_flushcontext  -t
 ```
 
 Now run without the password, you'll see an error
 
 ```bash
-./gcp-adc-tpm --persistentHandle=0x81010002  \
+gcp-adc-tpm --persistentHandle=0x81010002  \
    --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" 
 
 Error signing tpmjwt: can't Sign: TPM_RC_AUTH_FAIL (session 1): the authorization HMAC check failed and DA counter incrementedexit status 1   
@@ -327,7 +343,7 @@ Error signing tpmjwt: can't Sign: TPM_RC_AUTH_FAIL (session 1): the authorizatio
 Now run  and specify the password
 
 ```bash
-./gcp-adc-tpm --persistentHandle=0x81010002  \
+gcp-adc-tpm --persistentHandle=0x81010002  \
    --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"  --keyPass=testpwd
 ```
 
@@ -357,11 +373,11 @@ Note that the token is static and non-refreshable through gcloud. Each token gen
 
 Also note that issuing identity token is not supported
 
-##### Use Endorsement Key as parent
+##### Remote Key Transfer
 
-If you used option `C` above to transfer the service account key from `TPM-A` to `TPM-B` (tpm-b being the system where you will run the metadata server):
+If you used option `3` above to transfer the service account key from your laptop (`local`) to `TPM-A` (tpm-a being the system where you will run the metadata server):
 
-you can use `tpm2_duplicate` or the  utility here [tpmcopy: Transfer RSA|ECC|AES|HMAC key to a remote Trusted Platform Module (TPM)](https://github.com/salrashid123/tpmcopy) tool.  Note that the 'parent' key is set to `Endorsement RSA` which needs to get initialized on tpm-b first.  Furthermore, the key is bound by `pcr_duplicateselect` policy which must get fulfilled.
+you can use `tpm2_duplicate` or the  utility here [tpmcopy: Transfer RSA|ECC|AES|HMAC key to a remote Trusted Platform Module (TPM)](https://github.com/salrashid123/tpmcopy) tool.  Note that the 'parent' key is set to `Endorsement RSA` which needs to get initialized on tpm-a first.  Furthermore, by default key is bound by `pcr_duplicateselect` policy which must get fulfilled.
 
 The following examples shows how to use this cli if you transferred the key using pcr or password policy as well as if you saved the transferred key as PEM or persistent handle
 
@@ -375,19 +391,18 @@ swtpm_setup --tpmstate /tmp/myvtpm --tpm2 --create-ek-cert
 swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear --log level=2
 
 ## in new window
+export TPMA="127.0.0.1:2321"
 export TPM2TOOLS_TCTI="swtpm:port=2321"
 
 tpm2_flushcontext -t &&  tpm2_flushcontext -s  &&  tpm2_flushcontext -l
 ```
 
-* Password Policy
+###### Password Policy
 
 With service account key saved as PEM key file 
 
 ```bash
-export TPMA="127.0.0.1:2321"
-export TPM2TOOLS_TCTI="swtpm:port=2321"
-
+### on TPM A
 tpmcopy --mode publickey --parentKeyType=rsa_ek -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMA
 
 ###  copy public.pem to Local
@@ -401,7 +416,7 @@ tpmcopy --mode duplicate --keyType=rsa --secret=/tmp/key_rsa.pem --rsaScheme=rsa
 tpmcopy --mode import --parentKeyType=rsa_ek --in=/tmp/out.json --out=/tmp/tpmkey.pem  --tpm-path=$TPMA
 
 ### run 
-go run cmd/main.go  --keyfilepath=/tmp/tpmkey.pem \
+gcp-adc-tpm   --keyfilepath=/tmp/tpmkey.pem \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
      --useEKParent --keyPass=bar --tpm-path=127.0.0.1:2321
 ```
@@ -422,7 +437,7 @@ tpmcopy --mode duplicate --keyType=rsa --secret=/tmp/key_rsa.pem --rsaScheme=rsa
 tpmcopy --mode import --parentKeyType=rsa_ek \
  --in=/tmp/out.json --out=/tmp/tpmkey.pem \
  --pubout=/tmp/pub.dat --privout=/tmp/priv.dat \
-  --parent=0x81008000 --tpm-path=$TPMA
+  --parentpersistentHandle=0x81008000 --tpm-path=$TPMA
 
 tpmcopy --mode evict \
     --persistentHandle=0x81008001 \
@@ -437,14 +452,14 @@ tpmcopy --mode evict \
 # tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
 
 ### run 
-go run cmd/main.go  --keyfilepath=/tmp/tpmkey.pem \
+gcp-adc-tpm  --keyfilepath=/tmp/tpmkey.pem \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-     --useEKParent --keyPass=bar --persistentHandle 0x81008001 --tpm-path=127.0.0.1:2321
+     --useEKParent --keyPass=bar --persistentHandle 0x81008001 --tpm-path=$TPMA
 ```
 
-* PCR Policy
+###### PCR Policy
 
-Ensure `TPM-B` as a PCR you want to bind to
+Ensure `TPM-A` as a PCR you want to bind to
 
 ```bash
 $ tpm2_pcrread sha256:23
@@ -466,7 +481,7 @@ tpmcopy --mode publickey --parentKeyType=rsa_ek -tpmPublicKeyFile=/tmp/public.pe
 
 ### local
 tpmcopy --mode duplicate --keyType=rsa --secret=/tmp/key_rsa.pem --rsaScheme=rsassa \
- --hashScheme=sha256 --pcrValues=23:f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b \
+ --hashScheme=sha256 --pcrValues=23:F5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B \
   -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json
 
 ### copy out.json to TPM-A
@@ -475,9 +490,9 @@ tpmcopy --mode duplicate --keyType=rsa --secret=/tmp/key_rsa.pem --rsaScheme=rsa
 tpmcopy --mode import --parentKeyType=rsa_ek --in=/tmp/out.json --out=/tmp/tpmkey.pem --tpm-path=$TPMA
 
 ### run 
-go run cmd/main.go  --keyfilepath=/tmp/tpmkey.pem \
+gcp-adc-tpm  --keyfilepath=/tmp/tpmkey.pem \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-     --useEKParent --pcrs=23 --tpm-path=127.0.0.1:2321
+     --useEKParent --pcrs=23:F5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B --tpm-path=127.0.0.1:2321
 ```
 
 With service account key saved as a `PersistentHandle`
@@ -490,7 +505,7 @@ tpmcopy --mode publickey --parentKeyType=rsa_ek -tpmPublicKeyFile=/tmp/public.pe
 
 ### TPM-A
 tpmcopy --mode duplicate --keyType=rsa --secret=/tmp/key_rsa.pem --rsaScheme=rsassa \
- --hashScheme=sha256 --pcrValues=23:f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b \
+ --hashScheme=sha256 --pcrValues=23:F5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B \
   -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json
 
 ### copy out.json to TPM-B
@@ -514,10 +529,50 @@ tpmcopy --mode evict \
 # tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
 
 ### run 
-go run cmd/main.go \
+gcp-adc-tpm  \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-     --useEKParent --pcrs=23 --tpm-path=127.0.0.1:2341 --persistentHandle 0x81008001 \
-       --tpm-path=127.0.0.1:2321
+     --useEKParent --pcrs=23:F5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B \
+       --persistentHandle 0x81008001  --tpm-path=$TPMA
+```
+
+###### Skip Policy
+
+If you don't want to use a policy, then set `--skipPolicy` flag while using `tpmcopy`
+
+```bash
+tpmcopy --mode publickey --parentKeyType=rsa_ek -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMA
+
+### duplicate and use --skipPolicy
+tpmcopy --mode duplicate --keyType=rsa \
+    --secret=/tmp/key_rsa.pem --rsaScheme=rsassa \
+    --hashScheme=sha256 --skipPolicy -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json
+
+tpmcopy --mode import --parentKeyType=rsa_ek --in=/tmp/out.json --out=/tmp/tpmkey.pem  --tpm-path=$TPMA
+
+## use the key
+gcp-adc-tpm  --keyfilepath=/tmp/tpmkey.pem \
+     --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+     --useEKParent --tpm-path=127.0.0.1:2321
+```
+
+For password based non-session tranfers with H2 key:
+
+```bash
+## get h2
+tpmcopy --mode publickey --parentKeyType=h2    -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMA
+
+tpmcopy --mode duplicate --keyType=rsa  --password=bar \
+    --secret=/tmp/key_rsa.pem --rsaScheme=rsassa \
+    --hashScheme=sha256 --skipPolicy -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json
+
+tpmcopy --mode import --parentKeyType=h2 \
+     --in=/tmp/out.json --out=/tmp/tpmkey.pem --pubout=/tmp/pub.dat --privout=/tmp/priv.dat  \
+     --tpm-path=$TPMB
+
+## use the key (specify --keyPass but don't use --useEKParent)
+gcp-adc-tpm   --keyfilepath=/tmp/tpmkey.pem \
+     --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+     --tpm-path=127.0.0.1:2321 --keyPass=bar
 ```
 
 ### mTLS Workload Identify Federation
@@ -536,13 +591,12 @@ So if you have setup workload mtls where your CA issued certificates represent s
 ```bash
 export PROJECT_ID=`gcloud config get-value core/project`
 export PROJECT_NUMBER=`gcloud projects describe $PROJECT_ID --format='value(projectNumber)'`
-export POOL_ID="cert-pool-1"
-export WORKLOAD_CN="workload-adc-1"
+export POOL_ID="cert-pool-1"  ## pick a new unique name
+export WORKLOAD_CN="workload-adc-1"  ## pick a new unique name
 export PROVIDER_ID="cert-provider-adc"
 
 export TPM2TOOLS_TCTI="swtpm:port=2321"
 export TPM2OPENSSL_TCTI="swtpm:port=2321"
-export TPM2TSSENGINE_TCTI="swtpm:port=2321"
 
 printf '\x00\x00' > unique.dat
 tpm2_createprimary -C o -G ecc  -g sha256 \

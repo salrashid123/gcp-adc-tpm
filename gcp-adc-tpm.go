@@ -149,7 +149,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 				InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
 			}.Execute(rwr)
 			if err != nil {
-				return Token{}, fmt.Errorf("can't create pimaryEK: %v", err)
+				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create pimaryEK: %v", err)
 			}
 
 			defer func() {
@@ -161,7 +161,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			var load_session_cleanup func() error
 			parentSession, load_session_cleanup, err = tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16)
 			if err != nil {
-				return Token{}, fmt.Errorf("an't load policysession : %v", err)
+				return Token{}, fmt.Errorf("gcp-adc-tpm: can't load policysession : %v", err)
 			}
 			defer load_session_cleanup()
 
@@ -175,7 +175,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 				NonceTPM:      parentSession.NonceTPM(),
 			}.Execute(rwr)
 			if err != nil {
-				return Token{}, fmt.Errorf("can't create policysecret: %v", err)
+				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create policysecret: %v", err)
 			}
 
 		} else {
@@ -184,7 +184,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 				InPublic:      tpm2.New2B(keyfile.ECCSRK_H2_Template),
 			}.Execute(rwr)
 			if err != nil {
-				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create primary  %v", err)
+				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create primary (primary maybe RSAEK, not H2, try --useEKParent):   %v", err)
 			}
 			defer func() {
 				flushContextCmd := tpm2.FlushContext{
@@ -217,7 +217,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 				InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
 			}.Execute(rwr)
 			if err != nil {
-				return Token{}, fmt.Errorf("can't create pimaryEK: %v", err)
+				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create pimaryEK: %v", err)
 			}
 
 			defer func() {
@@ -229,7 +229,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			var load_session_cleanup func() error
 			parentSession, load_session_cleanup, err = tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16)
 			if err != nil {
-				return Token{}, fmt.Errorf("an't load policysession : %v", err)
+				return Token{}, fmt.Errorf("gcp-adc-tpm: can't load policysession : %v", err)
 			}
 			defer load_session_cleanup()
 
@@ -243,7 +243,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 				NonceTPM:      parentSession.NonceTPM(),
 			}.Execute(rwr)
 			if err != nil {
-				return Token{}, fmt.Errorf("can't create policysecret: %v", err)
+				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create policysecret: %v", err)
 			}
 
 		}
@@ -291,7 +291,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 
 			se, err = tpmjwt.NewPCRAndDuplicateSelectSession(rwr, sel, tpm2.TPM2BDigest{Buffer: pcrHash}, []byte(cfg.Keypass), primaryKey.Name, encryptionSessionHandle)
 			if err != nil {
-				return Token{}, fmt.Errorf("can't create autsession: %v", err)
+				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create authsession: %v", err)
 			}
 			flushContextCmd := tpm2.FlushContext{
 				FlushHandle: primaryKey.ObjectHandle,
@@ -309,7 +309,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		if cfg.UseEKParent {
 			se, err = tpmjwt.NewPolicyAuthValueAndDuplicateSelectSession(rwr, []byte(cfg.Keypass), primaryKey.Name, encryptionSessionHandle)
 			if err != nil {
-				return Token{}, fmt.Errorf("can't create autsession: %v", err)
+				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create authSession: %v", err)
 			}
 			flushContextCmd := tpm2.FlushContext{
 				FlushHandle: primaryKey.ObjectHandle,
@@ -503,7 +503,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
 			}
-			return Token{}, fmt.Errorf("salrashid123/x/oauth2/google: Token Request error:, %s", string(f))
+			return Token{}, fmt.Errorf("gcp-adc-tpm: Token Request error:, %s", string(f))
 		}
 
 		fa, err := io.ReadAll(resp.Body)
@@ -574,7 +574,7 @@ func getPCRMap(algo tpm2.TPMAlgID, pcrMap map[uint][]byte) (map[uint][]byte, []u
 			hsh.Write(v)
 		}
 	} else {
-		return nil, nil, nil, fmt.Errorf("unknown Hash Algorithm for TPM PCRs %v", algo)
+		return nil, nil, nil, fmt.Errorf("gcp-adc-tpm: unknown Hash Algorithm for TPM PCRs %v", algo)
 	}
 
 	pcrs := make([]uint, 0, len(pcrMap))
