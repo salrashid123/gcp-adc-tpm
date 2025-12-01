@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	tpmmtls "github.com/salrashid123/mtls-tokensource/tpm"
+	"google.golang.org/api/option"
 	credentialspb "google.golang.org/genproto/googleapis/iam/credentials/v1"
 )
 
@@ -336,7 +337,18 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			}
 
 			ctx := context.Background()
-			c, err := credentials.NewIamCredentialsClient(ctx)
+
+			ts, err := tpmmtls.TpmMTLSTokenSource(&tpmmtls.TpmMtlsTokenConfig{
+				TPMDevice:       cfg.TPMCloser,
+				Handle:          svcAccountKey,
+				Audience:        fmt.Sprintf("//iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/providers/%s", cfg.ProjectNumber, cfg.PoolID, cfg.ProviderID),
+				X509Certificate: cfg.Certificate,
+			})
+			if err != nil {
+				return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)
+			}
+
+			c, err := credentials.NewIamCredentialsClient(ctx, option.WithTokenSource(ts))
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: error  creatubg IAM Client: %v", err)
 			}
