@@ -27,11 +27,11 @@ import (
 	"golang.org/x/oauth2"
 
 	credentials "cloud.google.com/go/iam/credentials/apiv1"
+	credentialspb "cloud.google.com/go/iam/credentials/apiv1/credentialspb"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	tpmmtls "github.com/salrashid123/mtls-tokensource/tpm"
 	"google.golang.org/api/option"
-	credentialspb "google.golang.org/genproto/googleapis/iam/credentials/v1"
 )
 
 type rtokenJSON struct {
