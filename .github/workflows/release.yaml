@@ -51,8 +51,6 @@ jobs:
             core.setOutput('tag', tag)
             core.setOutput('no-v', no_v)
             core.setOutput('no-dash', no_dash)
-      - name: Set up Go
-        uses: actions/setup-go@v5
 
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@v6
