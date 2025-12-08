@@ -634,7 +634,60 @@ go run cmd/main.go -useMTLS \
              --pubCert=workload_1_crt.pem --tpm-path=$TPMA
 ```
 
-If you want an `id_token`, you need to enable impersonation.  See [Authenticating using Workload Identity Federation to Cloud Run, Cloud Functions](https://github.com/salrashid123/workload_federation_cloudrun_gcf).  Note that the id_token and default access_token when using workload federation represent *different* principals.  Possible TODO: add flag to return both the access and id_token which ultimately is the same impersonated service account.
+Alternatively, if you already have a raw (non-tpm) PEM key (`workload-adc-1-raw.pem`) and Certificate, you can import it into the TPM.
+
+```bash
+printf '\x00\x00' > unique.dat
+tpm2_createprimary -C o -G ecc  -g sha256 \
+   -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
+
+tpm2_create -G rsa2048:rsapss:null  -g sha256 -u key.pub -r key.priv -C primary.ctx
+tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+
+# now import the raw PM key
+tpm2_import -C primary.ctx -G rsa -i workload-adc-1-raw.pem -u key.pub -r key.prv
+
+tpm2_readpublic -c key.ctx -f PEM -o workload_1_public.pem
+tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+
+tpm2_encodeobject -C primary.ctx -u key.pub -r key.priv -o workload_1_key.key
+```
+
+then to get an access_token:
+
+```bash
+export TPMA="127.0.0.1:2321"
+
+gcp-adc-tpm -useMTLS \
+    --keyfilepath=/tmp/workload_1_key.pem  \
+        --projectNumber=$PROJECT_NUMBER  \
+           --poolID=$POOL_ID --providerID=$PROVIDER_ID   \
+             --pubCert=/tmp/workload-adc-1.crt --tpm-path=$TPMA
+```
+
+
+If you specify `--svcAccountEmail=` with mTLS, the token returned will be for the target service account and *not* the workload identity `principal://`
+
+If you want an `id_token`, you need to enable impersonation.  See [Authenticating using Workload Identity Federation to Cloud Run, Cloud Functions](https://github.com/salrashid123/workload_federation_cloudrun_gcf).  Note that the id_token and default access_token when using workload federation represent *different* principals. 
+
+To get an Identity Token for mTLS, you need to associate the `principal://` for the service account to an actual service account
+
+```bash
+gcloud iam service-accounts \
+  add-iam-policy-binding "tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+  --member=serviceAccount:"principal://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$POOL_ID/subject/$WORKLOAD_CN" \
+  --role=roles/iam.serviceAccountTokenCreator
+```
+
+then
+
+```bash
+gcp-adc-tpm -useMTLS  --audience=foo --identityToken --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+    --keyfilepath=/tmp/workload_1_key.pem  \
+        --projectNumber=$PROJECT_NUMBER  \
+           --poolID=$POOL_ID --providerID=$PROVIDER_ID   \
+             --pubCert=/tmp/workload-adc-1.crt --tpm-path=$TPMA
+```
 
 ### Encrypted TPM Sessions
 
@@ -665,8 +718,7 @@ You can also derive the "name" from a public key of a known template  see [go-tp
 
 Unit test just verifies that a token is returned.  TODO is to validate the token against a gcp api (the oauth2 tokeninfo endopoint wont work because the access token is a self-signed JWT)
 
-
-Using [swtpm](https://github.com/stefanberger/swtpm)
+Using [swtpm](https://github.com/stefanberger/swtpm).  The following test both oauth2 and mtls tokens.  You must setup mtls provider and load a cert prior to use.  You can skip the mtls tests with a flag
 
 ```bash
 rm -rf /tmp/myvtpm && mkdir /tmp/myvtpm
@@ -680,9 +732,21 @@ export TPM2TOOLS_TCTI="swtpm:port=2321"
 export CICD_SA_EMAIL="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com"
 export CICD_SA_PEM=`cat /tmp/key_rsa.pem`
 
-go test -v
+# export CICD_POOL_ID=cert-pool-1
+# export CICD_PROJECT_NUMBER=1150810122222
+# export CICD_PROVIDER_ID=cert-provider-adc
+
+go test -v -count=1  -run '^(TestPersistentHandleCredentials|TestKeyFileCredentials|TestOauth2Token|TestIdToken)'
+# go test -v
 ```
 
+The tests cases creates peresistent handles.  to clear them 
+
+```bash
+tpm2_getcap handles-persistent
+# then purge each one sequentially
+tpm2_evictcontrol -c 0x81008001
+```
 
 ### Using ASN.1 Specification for TPM 2.0 Key Files
 

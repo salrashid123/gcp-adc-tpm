@@ -330,29 +330,33 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 	// now we're ready to sign
 
 	if cfg.UseMTLS {
+		ctx := context.Background()
+
+		if cfg.ProjectNumber == "" || cfg.PoolID == "" || cfg.ProviderID == "" {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: both ProjectNumber, ProviderID PoolID must be specified for mtls")
+		}
+
+		ts, err := tpmmtls.TpmMTLSTokenSource(&tpmmtls.TpmMtlsTokenConfig{
+			TPMDevice:       cfg.TPMCloser,
+			Handle:          svcAccountKey,
+			Audience:        fmt.Sprintf("//iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/providers/%s", cfg.ProjectNumber, cfg.PoolID, cfg.ProviderID),
+			X509Certificate: cfg.Certificate,
+		})
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)
+		}
+
+		c, err := credentials.NewIamCredentialsClient(ctx, option.WithTokenSource(ts))
+		if err != nil {
+			return Token{}, fmt.Errorf("gcp-adc-tpm: error  creatubg IAM Client: %v", err)
+		}
+		defer c.Close()
+
 		if cfg.IdentityToken {
 
 			if cfg.ServiceAccountEmail == "" || cfg.Audience == "" {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: both serviceAccountEmail and Audience must be specified for id_tokens")
 			}
-
-			ctx := context.Background()
-
-			ts, err := tpmmtls.TpmMTLSTokenSource(&tpmmtls.TpmMtlsTokenConfig{
-				TPMDevice:       cfg.TPMCloser,
-				Handle:          svcAccountKey,
-				Audience:        fmt.Sprintf("//iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/providers/%s", cfg.ProjectNumber, cfg.PoolID, cfg.ProviderID),
-				X509Certificate: cfg.Certificate,
-			})
-			if err != nil {
-				return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)
-			}
-
-			c, err := credentials.NewIamCredentialsClient(ctx, option.WithTokenSource(ts))
-			if err != nil {
-				return Token{}, fmt.Errorf("gcp-adc-tpm: error  creatubg IAM Client: %v", err)
-			}
-			defer c.Close()
 
 			idreq := &credentialspb.GenerateIdTokenRequest{
 				Name:         fmt.Sprintf("projects/-/serviceAccounts/%s", cfg.ServiceAccountEmail),
@@ -370,15 +374,29 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 				TokenType:   "Bearer",
 			}, nil
 		} else {
-			ts, err := tpmmtls.TpmMTLSTokenSource(&tpmmtls.TpmMtlsTokenConfig{
-				TPMDevice:       cfg.TPMCloser,
-				Handle:          svcAccountKey,
-				Audience:        fmt.Sprintf("//iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/providers/%s", cfg.ProjectNumber, cfg.PoolID, cfg.ProviderID),
-				X509Certificate: cfg.Certificate,
-			})
-			if err != nil {
-				return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)
+
+			if cfg.ServiceAccountEmail != "" {
+
+				ctx := context.Background()
+
+				atreq := &credentialspb.GenerateAccessTokenRequest{
+					Name:  fmt.Sprintf("projects/-/serviceAccounts/%s", cfg.ServiceAccountEmail),
+					Scope: cfg.Scopes,
+				}
+				atresp, err := c.GenerateAccessToken(ctx, atreq)
+				if err != nil {
+					return Token{}, fmt.Errorf("gcp-adc-tpm: error  getting access_token: %v", err)
+				}
+				secondsDiff := 3600
+
+				return Token{
+					AccessToken: atresp.AccessToken,
+					ExpiresIn:   int64(secondsDiff),
+					TokenType:   "Bearer",
+				}, nil
+
 			}
+
 			tok, err := ts.Token()
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)

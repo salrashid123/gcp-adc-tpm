@@ -19,10 +19,12 @@ import (
 )
 
 const (
-	swTPMPath = "127.0.0.1:2321"
+	swTPMPath  = "127.0.0.1:2321"
+	svcEnvVar  = "CICD_SA_PEM"
+	mtlsEnvVar = "CICD_MTLS_KEY_PEM"
 )
 
-func loadKey(rwr transport.TPM, persistentHandle uint, keyFilePath string) (tpm2.TPMHandle, tpm2.TPM2BName, func(), error) {
+func loadKey(rwr transport.TPM, persistentHandle uint, keyFilePath string, envVarName string, rsaScheme tpm2.TPMAlgID) (tpm2.TPMHandle, tpm2.TPM2BName, func(), error) {
 
 	primaryKey, err := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.TPMRHOwner,
@@ -38,7 +40,7 @@ func loadKey(rwr transport.TPM, persistentHandle uint, keyFilePath string) (tpm2
 		_, _ = flushContextCmd.Execute(rwr)
 	}()
 
-	saPEM := os.Getenv("CICD_SA_PEM")
+	saPEM := os.Getenv(envVarName)
 
 	block, _ := pem.Decode([]byte(saPEM))
 	if block == nil {
@@ -47,6 +49,30 @@ func loadKey(rwr transport.TPM, persistentHandle uint, keyFilePath string) (tpm2
 	pvk, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
 		return 0, tpm2.TPM2BName{}, nil, err
+	}
+
+	var sch tpm2.TPMTRSAScheme
+
+	if rsaScheme == tpm2.TPMAlgRSAPSS {
+		sch = tpm2.TPMTRSAScheme{
+			Scheme: tpm2.TPMAlgRSAPSS,
+			Details: tpm2.NewTPMUAsymScheme(
+				tpm2.TPMAlgRSAPSS,
+				&tpm2.TPMSSigSchemeRSAPSS{
+					HashAlg: tpm2.TPMAlgSHA256,
+				},
+			),
+		}
+	} else {
+		sch = tpm2.TPMTRSAScheme{
+			Scheme: tpm2.TPMAlgRSASSA,
+			Details: tpm2.NewTPMUAsymScheme(
+				tpm2.TPMAlgRSASSA,
+				&tpm2.TPMSSigSchemeRSASSA{
+					HashAlg: tpm2.TPMAlgSHA256,
+				},
+			),
+		}
 	}
 
 	pv := pvk.(*rsa.PrivateKey)
@@ -66,16 +92,8 @@ func loadKey(rwr transport.TPM, persistentHandle uint, keyFilePath string) (tpm2
 			tpm2.TPMAlgRSA,
 			&tpm2.TPMSRSAParms{
 				Exponent: uint32(pv.PublicKey.E),
-				Scheme: tpm2.TPMTRSAScheme{
-					Scheme: tpm2.TPMAlgRSASSA,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgRSASSA,
-						&tpm2.TPMSSigSchemeRSASSA{
-							HashAlg: tpm2.TPMAlgSHA256,
-						},
-					),
-				},
-				KeyBits: 2048,
+				Scheme:   sch,
+				KeyBits:  2048,
 			},
 		),
 
@@ -184,7 +202,7 @@ func TestPersistentHandleCredentials(t *testing.T) {
 	filePath := filepath.Join(tempDir, "key.pem")
 
 	persistentHandle := 0x81008001
-	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath)
+	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath, svcEnvVar, tpm2.TPMAlgRSASSA)
 	require.NoError(t, err)
 	defer closer()
 
@@ -214,7 +232,7 @@ func TestKeyFileCredentials(t *testing.T) {
 	filePath := filepath.Join(tempDir, "key.pem")
 
 	persistentHandle := 0x81008002
-	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath)
+	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath, svcEnvVar, tpm2.TPMAlgRSASSA)
 	require.NoError(t, err)
 	defer closer()
 
@@ -243,7 +261,7 @@ func TestOauth2Token(t *testing.T) {
 	filePath := filepath.Join(tempDir, "key.pem")
 
 	persistentHandle := 0x81008003
-	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath)
+	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath, svcEnvVar, tpm2.TPMAlgRSASSA)
 	require.NoError(t, err)
 	defer closer()
 
@@ -273,7 +291,7 @@ func TestIdToken(t *testing.T) {
 	filePath := filepath.Join(tempDir, "key.pem")
 
 	persistentHandle := 0x81008004
-	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath)
+	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath, svcEnvVar, tpm2.TPMAlgRSASSA)
 	require.NoError(t, err)
 	defer closer()
 
@@ -287,6 +305,98 @@ func TestIdToken(t *testing.T) {
 		IdentityToken:       true,
 		Audience:            "https://foo.bar",
 		Scopes:              []string{"https://www.googleapis.com/auth/cloud-platform"},
+	})
+	require.NoError(t, err)
+
+	//t.Log(resp.AccessToken)
+}
+
+func TestMTLSAccessToken(t *testing.T) {
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
+	require.NoError(t, err)
+	defer tpmDevice.Close()
+
+	rwr := transport.FromReadWriter(tpmDevice)
+
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "key.pem")
+
+	persistentHandle := 0x81008005
+	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath, mtlsEnvVar, tpm2.TPMAlgRSAPSS)
+	require.NoError(t, err)
+	defer closer()
+
+	certPEMBlock := os.Getenv("CICD_MTLS_CERT_PEM")
+
+	block, _ := pem.Decode([]byte(certPEMBlock))
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	//saEmail := os.Getenv("CICD_SA_EMAIL")
+
+	projectNumber := os.Getenv("CICD_PROJECT_NUMBER")
+	poolID := os.Getenv("CICD_POOL_ID")
+	providerID := os.Getenv("CICD_PROVIDER_ID")
+
+	_, err = NewGCPTPMCredential(&GCPTPMConfig{
+		TPMCloser:      tpmDevice,
+		CredentialFile: filePath,
+		//ServiceAccountEmail: saEmail,
+		ExpireIn: 10,
+		Scopes:   []string{"https://www.googleapis.com/auth/cloud-platform"},
+
+		UseMTLS:       true,
+		ProjectNumber: projectNumber,
+		PoolID:        poolID,
+		ProviderID:    providerID,
+		Certificate:   cert,
+	})
+	require.NoError(t, err)
+
+	//t.Log(resp.AccessToken)
+}
+
+func TestMTLSIDToken(t *testing.T) {
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
+	require.NoError(t, err)
+	defer tpmDevice.Close()
+
+	rwr := transport.FromReadWriter(tpmDevice)
+
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "key.pem")
+
+	persistentHandle := 0x81008006
+	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath, mtlsEnvVar, tpm2.TPMAlgRSAPSS)
+	require.NoError(t, err)
+	defer closer()
+
+	certPEMBlock := os.Getenv("CICD_MTLS_CERT_PEM")
+
+	block, _ := pem.Decode([]byte(certPEMBlock))
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	saEmail := os.Getenv("CICD_SA_EMAIL")
+
+	projectNumber := os.Getenv("CICD_PROJECT_NUMBER")
+	poolID := os.Getenv("CICD_POOL_ID")
+	providerID := os.Getenv("CICD_PROVIDER_ID")
+
+	_, err = NewGCPTPMCredential(&GCPTPMConfig{
+		TPMCloser:           tpmDevice,
+		CredentialFile:      filePath,
+		ServiceAccountEmail: saEmail,
+		ExpireIn:            10,
+		Scopes:              []string{"https://www.googleapis.com/auth/cloud-platform"},
+
+		UseMTLS:       true,
+		IdentityToken: true,
+		Audience:      "https://foo",
+		ProjectNumber: projectNumber,
+		PoolID:        poolID,
+		ProviderID:    providerID,
+		Certificate:   cert,
 	})
 	require.NoError(t, err)
 
