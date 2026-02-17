@@ -71,7 +71,7 @@ You can set the following options on usage:
 | **`--keyPass`** | Passphrase for the key handle (will use TPM_KEY_AUTH env var) |
 | **`--pcrs`** | "PCR Bound slot:value (increasing order, comma separated)" |
 | **`--rawOutput`** |  Return just the token, nothing else |
-| **`--useEKParent`** | Use endorsement RSAKey as parent (default: false) |
+| **`--useEKParent`** | Use endorsement keys (`rsa_ek` or `ecc_ek` as parent (default: `rsa_ek`) |
 | **`--tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session |
 
 #### Oauth2 Options
@@ -373,7 +373,7 @@ Note that the token is static and non-refreshable through gcloud. Each token gen
 
 Also note that issuing identity token is not supported
 
-##### Remote Key Transfer
+### Remote Key Transfer
 
 If you used option `3` above to transfer the service account key from your laptop (`local`) to `TPM-A` (tpm-a being the system where you will run the metadata server):
 
@@ -418,7 +418,7 @@ tpmcopy --mode import --parentKeyType=rsa_ek --in=/tmp/out.json --out=/tmp/tpmke
 ### run 
 gcp-adc-tpm   --keyfilepath=/tmp/tpmkey.pem \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-     --useEKParent --keyPass=bar --tpm-path=127.0.0.1:2321
+     --useEKParent=rsa_ek --keyPass=bar --tpm-path=127.0.0.1:2321
 ```
 
 With service account key saved as a `PersistentHandle`
@@ -454,7 +454,7 @@ tpmcopy --mode evict \
 ### run 
 gcp-adc-tpm  --keyfilepath=/tmp/tpmkey.pem \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-     --useEKParent --keyPass=bar --persistentHandle 0x81008001 --tpm-path=$TPMA
+     --useEKParent=rsa_ek --keyPass=bar --persistentHandle 0x81008001 --tpm-path=$TPMA
 ```
 
 ###### PCR Policy
@@ -492,7 +492,7 @@ tpmcopy --mode import --parentKeyType=rsa_ek --in=/tmp/out.json --out=/tmp/tpmke
 ### run 
 gcp-adc-tpm  --keyfilepath=/tmp/tpmkey.pem \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-     --useEKParent --pcrs=23:F5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B --tpm-path=127.0.0.1:2321
+     --useEKParent=rsa_ek --pcrs=23:F5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B --tpm-path=127.0.0.1:2321
 ```
 
 With service account key saved as a `PersistentHandle`
@@ -531,7 +531,7 @@ tpmcopy --mode evict \
 ### run 
 gcp-adc-tpm  \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-     --useEKParent --pcrs=23:F5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B \
+     --useEKParent=rsa_ek --pcrs=23:F5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B \
        --persistentHandle 0x81008001  --tpm-path=$TPMA
 ```
 
@@ -552,7 +552,7 @@ tpmcopy --mode import --parentKeyType=rsa_ek --in=/tmp/out.json --out=/tmp/tpmke
 ## use the key
 gcp-adc-tpm  --keyfilepath=/tmp/tpmkey.pem \
      --svcAccountEmail="tpm-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-     --useEKParent --tpm-path=127.0.0.1:2321
+     --useEKParent=rsa_ek --tpm-path=127.0.0.1:2321
 ```
 
 For password based non-session tranfers with H2 key:

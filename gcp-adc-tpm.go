@@ -78,7 +78,7 @@ type GCPTPMConfig struct {
 	ExpireIn int
 
 	IdentityToken         bool
-	UseEKParent           bool
+	UseEKParent           string
 	Audience              string
 	ServiceAccountEmail   string
 	Scopes                []string
@@ -146,10 +146,19 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		}
 
 		// specify its parent directly
-		if cfg.UseEKParent {
+		if cfg.UseEKParent != "" {
+			var keytype tpm2.TPMTPublic
+			switch cfg.UseEKParent {
+			case "rsa_ek":
+				keytype = tpm2.RSAEKTemplate
+			case "ecc_ek":
+				keytype = tpm2.ECCEKTemplate
+			default:
+				return Token{}, fmt.Errorf("gcp-adc-tpm: unsupported ekparent: %s", cfg.UseEKParent)
+			}
 			primaryKey, err = tpm2.CreatePrimary{
 				PrimaryHandle: tpm2.TPMRHEndorsement,
-				InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
+				InPublic:      tpm2.New2B(keytype),
 			}.Execute(rwr)
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create pimaryEK: %v", err)
@@ -213,11 +222,20 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		}
 		svcAccountKey = svcAccountKeyResponse.ObjectHandle
 	} else {
-		if cfg.UseEKParent {
+		if cfg.UseEKParent != "" {
+			var keytype tpm2.TPMTPublic
+			switch cfg.UseEKParent {
+			case "rsa_ek":
+				keytype = tpm2.RSAEKTemplate
+			case "ecc_ek":
+				keytype = tpm2.ECCEKTemplate
+			default:
+				return Token{}, fmt.Errorf("gcp-adc-tpm: unsupported ekparent: %s", cfg.UseEKParent)
+			}
 			var err error
 			primaryKey, err = tpm2.CreatePrimary{
 				PrimaryHandle: tpm2.TPMRHEndorsement,
-				InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
+				InPublic:      tpm2.New2B(keytype),
 			}.Execute(rwr)
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create pimaryEK: %v", err)
@@ -290,7 +308,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			},
 		}
 
-		if cfg.UseEKParent {
+		if cfg.UseEKParent != "" {
 
 			se, err = tpmjwt.NewPCRAndDuplicateSelectSession(rwr, sel, tpm2.TPM2BDigest{Buffer: pcrHash}, []byte(cfg.Keypass), primaryKey.Name, encryptionSessionHandle)
 			if err != nil {
@@ -309,7 +327,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 
 	} else if keyPasswordAuth != "" {
 
-		if cfg.UseEKParent {
+		if cfg.UseEKParent != "" {
 			se, err = tpmjwt.NewPolicyAuthValueAndDuplicateSelectSession(rwr, []byte(cfg.Keypass), primaryKey.Name, encryptionSessionHandle)
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create authSession: %v", err)
