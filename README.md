@@ -71,7 +71,7 @@ You can set the following options on usage:
 | **`--keyPass`** | Passphrase for the key handle (will use TPM_KEY_AUTH env var) |
 | **`--pcrs`** | "PCR Bound slot:value (increasing order, comma separated)" |
 | **`--rawOutput`** |  Return just the token, nothing else |
-| **`--useEKParent`** | Use endorsement keys (`rsa_ek` or `ecc_ek` as parent (default: `rsa_ek`) |
+| **`--useEKParent`** | Use endorsement keys (`rsa_ek` or `ecc_ek` as parent (default: ``) |
 | **`--tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session |
 
 #### Oauth2 Options

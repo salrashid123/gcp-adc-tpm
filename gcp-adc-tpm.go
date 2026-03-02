@@ -146,7 +146,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		}
 
 		// specify its parent directly
-		if cfg.UseEKParent != "" {
+		if cfg.UseEKParent == "rsa_ek" || cfg.UseEKParent == "ecc_ek" {
 			var keytype tpm2.TPMTPublic
 			switch cfg.UseEKParent {
 			case "rsa_ek":

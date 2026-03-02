@@ -32,7 +32,7 @@ var (
 	expireIn         = flag.Int("expireIn", 3600, "Token expires in seconds")
 	scopes           = flag.String("scopes", "https://www.googleapis.com/auth/cloud-platform", "comma separated scopes")
 	useOauthToken    = flag.Bool("useOauthToken", false, "Use oauth2 token instead of jwtAccessToken (default: false)")
-	useEKParent      = flag.String("useEKParent", "rsa_ek", "Use endorsement (rsa_ek or ecc_ek) as parent (not h2) (default: rsa_ek)")
+	useEKParent      = flag.String("useEKParent", "", "Use endorsement (rsa_ek or ecc_ek) as parent (not h2)")
 
 	// oauth options
 	identityToken   = flag.Bool("identityToken", false, "Generate google ID token (default: false)")
