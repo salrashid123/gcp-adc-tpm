@@ -78,7 +78,7 @@ You can set the following options on usage:
 
 | Option | Description |
 |:------------|-------------|
-| **`--useOauthToken`** | issue oauth2 token (default:false) |
+| **`--useOauthToken`** | issue oauth2 token instead of a JWTAccessToken (default:false) |
 | **`--svcAccountEmail`** | (required) Service Account Email |
 | **`--identityToken`** |  Generate Google OIDC token |
 | **`--audience`** |  Audience for the id_token |
@@ -373,6 +373,11 @@ Note that the token is static and non-refreshable through gcloud. Each token gen
 
 Also note that issuing identity token is not supported
 
+### Generate key on TPM and export x509 certificate to GCP
+
+If you want to use option `2` where you generate a key on the tpm and issue an x509, see [Generate key on TPM and export public X509 certificate to GCP](https://github.com/salrashid123/oauth2?tab=readme-ov-file#b-generate-key-on-tpm-and-export-public-x509-certificate-to-gcp)
+
+
 ### Remote Key Transfer
 
 If you used option `3` above to transfer the service account key from your laptop (`local`) to `TPM-A` (tpm-a being the system where you will run the metadata server):
@@ -402,14 +407,21 @@ tpm2_flushcontext -t &&  tpm2_flushcontext -s  &&  tpm2_flushcontext -l
 With service account key saved as PEM key file 
 
 ```bash
+wget -O tpmcopy https://github.com/salrashid123/tpmcopy/releases/download/v0.5.2/tpmcopy_0.5.2_linux_amd64
+chmod u+x tpmcopy
+
 ### on TPM A
 tpmcopy --mode publickey --parentKeyType=rsa_ek -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMA
 
 ###  copy public.pem to Local
 
 ### local
-tpmcopy --mode duplicate --keyType=rsa --secret=/tmp/key_rsa.pem --rsaScheme=rsassa \
- --hashScheme=sha256 --password=bar -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json
+cat tpm-svc-account.json | jq -r '.private_key' > /tmp/f.json
+openssl rsa -in /tmp/f.json -out /tmp/key_rsa.pem 
+
+tpmcopy --mode duplicate --password=bar --keyType=rsa \
+  --secret /tmp/key_rsa.pem --rsaScheme=rsassa \
+  --hashScheme=sha256  -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json
 
 ###  copy /tmp/out.json to TPM-A
 ### TPM-A
@@ -723,7 +735,7 @@ Using [swtpm](https://github.com/stefanberger/swtpm).  The following test both o
 ```bash
 rm -rf /tmp/myvtpm && mkdir /tmp/myvtpm
 swtpm_setup --tpmstate /tmp/myvtpm --tpm2 --create-ek-cert
-swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear
+swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear --log level=2
 
 # then specify "127.0.0.1:2321"  as the TPM device path in the examples
 # and for tpm2_tools, export the following var

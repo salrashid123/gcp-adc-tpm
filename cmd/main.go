@@ -115,6 +115,18 @@ func run() int {
 		}
 	}
 
+	var keyType gcptpmcredential.ParentKeyType
+	switch *useEKParent {
+	case gcptpmcredential.RSA_EK.String():
+		keyType = gcptpmcredential.RSA_EK
+	case gcptpmcredential.ECC_EK.String():
+		keyType = gcptpmcredential.ECC_EK
+	case gcptpmcredential.H2.String():
+		keyType = gcptpmcredential.H2
+	default:
+		keyType = gcptpmcredential.H2
+	}
+
 	resp, err := gcptpmcredential.NewGCPTPMCredential(&gcptpmcredential.GCPTPMConfig{
 		TPMCloser:        rwr,
 		PersistentHandle: uint(*persistentHandle),
@@ -130,7 +142,7 @@ func run() int {
 		Keypass:               keyPasswordAuth,
 		Pcrs:                  *pcrs,
 		UseOauthToken:         *useOauthToken,
-		UseEKParent:           *useEKParent,
+		UseEKParent:           keyType,
 
 		UseMTLS:       *useMTLS,
 		ProjectNumber: *projectNumber,

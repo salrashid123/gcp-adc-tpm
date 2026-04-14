@@ -631,7 +631,7 @@ func TestKeyFileEKRSACredentials(t *testing.T) {
 		TPMCloser:           tpmDevice,
 		CredentialFile:      filePath,
 		ServiceAccountEmail: saEmail,
-		UseEKParent:         "rsa_ek",
+		UseEKParent:         RSA_EK,
 		ExpireIn:            10,
 		Scopes:              []string{"https://www.googleapis.com/auth/cloud-platform"},
 	})
@@ -659,7 +659,7 @@ func TestKeyFileEKECCCredentials(t *testing.T) {
 		TPMCloser:           tpmDevice,
 		CredentialFile:      filePath,
 		ServiceAccountEmail: saEmail,
-		UseEKParent:         "ecc_ek",
+		UseEKParent:         ECC_EK,
 		ExpireIn:            10,
 		Scopes:              []string{"https://www.googleapis.com/auth/cloud-platform"},
 	})
