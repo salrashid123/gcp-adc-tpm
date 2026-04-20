@@ -400,7 +400,7 @@ export TPM2TOOLS_TCTI="swtpm:port=2321"
 tpm2_flushcontext -t &&  tpm2_flushcontext -s  &&  tpm2_flushcontext -l
 ```
 
-###### Password Policy
+#### Password Policy
 
 With service account key saved as PEM key file 
 
@@ -467,7 +467,7 @@ gcp-adc-tpm  --keyfilepath=/tmp/tpmkey.pem \
      --useEKParent=rsa_ek --keyPass=bar --persistentHandle 0x81008001 --tpm-path=$TPMA
 ```
 
-###### PCR Policy
+#### PCR Policy
 
 Ensure `TPM-A` as a PCR you want to bind to
 
@@ -545,7 +545,7 @@ gcp-adc-tpm  \
        --persistentHandle 0x81008001  --tpm-path=$TPMA
 ```
 
-###### Skip Policy
+#### Skip Policy
 
 If you don't want to use a policy, then set `--skipPolicy` flag while using `tpmcopy`
 
