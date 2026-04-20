@@ -71,28 +71,28 @@ type Token struct {
 }
 
 type GCPTPMConfig struct {
-	TPMCloser        io.ReadWriteCloser
-	PersistentHandle uint
-	CredentialFile   string
+	TPMCloser        io.ReadWriteCloser // TPM Reqd closer
+	PersistentHandle uint               // use if key is referenced as persistent handle
+	CredentialFile   string             // use if key is referenced as PEM keyfile
 
-	ExpireIn int
+	ExpireIn int // how long the JWTAccessToken is valid for
 
-	IdentityToken         bool
-	UseEKParent           ParentKeyType
-	Audience              string
-	ServiceAccountEmail   string
-	Scopes                []string
-	SessionEncryptionName string
-	Parentpass            string
-	Keypass               string
-	Pcrs                  string
-	UseOauthToken         bool // enables oauth2 token (default: false)
+	IdentityToken         bool          // return an id token
+	UseEKParent           ParentKeyType // set true if the parent is rsa_ek or ecc_ek
+	Audience              string        // audience for the id_token
+	ServiceAccountEmail   string        // name of the service account
+	Scopes                []string      // scopes to provide
+	SessionEncryptionName string        // hex string "name" of the rsa_ek to use for session encryption
+	Parentpass            string        // password for the parent object
+	Keypass               string        // password for the key object
+	Pcrs                  string        // string form of the pcrs to use (formatted as pcr_bank:pcr_sha256Hex)
+	UseOauthToken         bool          // enables oauth2 token (default: false)
 
-	UseMTLS       bool
-	ProjectNumber string
-	PoolID        string
-	ProviderID    string
-	Certificate   *x509.Certificate
+	UseMTLS       bool              // enables mtls workload federation
+	ProjectNumber string            //used for mtls workload federation
+	PoolID        string            //used for mtls workload federation
+	ProviderID    string            //used for mtls workload federation
+	Certificate   *x509.Certificate //used for mtls workload federation
 }
 
 var ()
@@ -109,36 +109,41 @@ func (d ParentKeyType) String() string {
 	return [...]string{"h2", "rsa_ek", "ecc_ek"}[d]
 }
 
-func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
+func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 
 	rwr := transport.FromReadWriter(cfg.TPMCloser)
 
+	// first acquire the default RSA EK key to use for encrypted sessions.  You should
+	// supply the SessionEncryptionName parameter (othewise getting the default rsa_ek manually isn't too secure anwyay...)
 	var encryptionSessionHandle tpm2.TPMHandle
+	createEKRsp, err := tpm2.CreatePrimary{
+		PrimaryHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHEndorsement,
+			Name:   tpm2.HandleName(tpm2.TPMRHEndorsement),
+			Auth:   tpm2.PasswordAuth([]byte(cfg.Parentpass)),
+		},
+		InPublic: tpm2.New2B(tpm2.RSAEKTemplate),
+	}.Execute(rwr)
+	if err != nil {
+		return Token{}, fmt.Errorf("gcp-adc-tpm: can't acquire acquire ek %v", err)
+	}
 
+	defer func() {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: createEKRsp.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+	}()
+	encryptionSessionHandle = createEKRsp.ObjectHandle
+
+	// if the encryptionName was specified as argument, compare it
 	if cfg.SessionEncryptionName != "" {
-
-		createEKCmd := tpm2.CreatePrimary{
-			PrimaryHandle: tpm2.TPMRHEndorsement,
-			InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
-		}
-		createEKRsp, err := createEKCmd.Execute(rwr)
-		if err != nil {
-			return Token{}, fmt.Errorf("gcp-adc-tpm: can't acquire acquire ek %v", err)
-		}
-
-		defer func() {
-			flushContextCmd := tpm2.FlushContext{
-				FlushHandle: createEKRsp.ObjectHandle,
-			}
-			_, _ = flushContextCmd.Execute(rwr)
-		}()
-
-		encryptionSessionHandle = createEKRsp.ObjectHandle
 		if cfg.SessionEncryptionName != hex.EncodeToString(createEKRsp.Name.Buffer) {
 			return Token{}, fmt.Errorf("gcp-adc-tpm: session encryption names do not match expected [%s] got [%s]", cfg.SessionEncryptionName, hex.EncodeToString(createEKRsp.Name.Buffer))
 		}
 	}
 
+	// this is the service account key to use for getting a token
 	var svcAccountKey tpm2.TPMHandle
 
 	parentPasswordAuth := getEnv(PARENT_PASS_VAR, "", cfg.Parentpass)
@@ -147,6 +152,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 	var primaryKey *tpm2.CreatePrimaryResponse
 	var parentSession tpm2.Session
 
+	// if a keyfile was specfified
 	if cfg.CredentialFile != "" {
 		c, err := os.ReadFile(cfg.CredentialFile)
 		if err != nil {
@@ -157,7 +163,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			return Token{}, fmt.Errorf("gcp-adc-tpm: failed decoding key: %v", err)
 		}
 
-		// specify its parent directly
+		// are we deailing with an rsa_ek or ecc_ek, if so, we need to create the appropriate parent
 		if cfg.UseEKParent == RSA_EK || cfg.UseEKParent == ECC_EK {
 			var keytype tpm2.TPMTPublic
 			switch cfg.UseEKParent {
@@ -168,9 +174,14 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			default:
 				return Token{}, fmt.Errorf("gcp-adc-tpm: unsupported ekparent: %s", cfg.UseEKParent)
 			}
+			// create the parent
 			primaryKey, err = tpm2.CreatePrimary{
-				PrimaryHandle: tpm2.TPMRHEndorsement,
-				InPublic:      tpm2.New2B(keytype),
+				PrimaryHandle: tpm2.AuthHandle{
+					Handle: tpm2.TPMRHEndorsement,
+					Name:   tpm2.HandleName(tpm2.TPMRHEndorsement),
+					Auth:   tpm2.PasswordAuth([]byte(cfg.Parentpass)),
+				},
+				InPublic: tpm2.New2B(keytype),
 			}.Execute(rwr)
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create pimaryEK: %v", err)
@@ -182,6 +193,8 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 				}
 				_, _ = flushContextCmd.Execute(rwr)
 			}()
+
+			// load it
 			var load_session_cleanup func() error
 			parentSession, load_session_cleanup, err = tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16)
 			if err != nil {
@@ -203,6 +216,8 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			}
 
 		} else {
+
+			// were' dealing with the default "H2" parent
 			primaryKey, err = tpm2.CreatePrimary{
 				PrimaryHandle: key.Parent,
 				InPublic:      tpm2.New2B(keyfile.ECCSRK_H2_Template),
@@ -234,6 +249,10 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		}
 		svcAccountKey = svcAccountKeyResponse.ObjectHandle
 	} else {
+
+		//  we deailing with a persistent handle
+
+		// first load the parent if rsa_ek or ecc_ek
 		if cfg.UseEKParent != H2 {
 			var keytype tpm2.TPMTPublic
 			switch cfg.UseEKParent {
@@ -246,8 +265,12 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			}
 			var err error
 			primaryKey, err = tpm2.CreatePrimary{
-				PrimaryHandle: tpm2.TPMRHEndorsement,
-				InPublic:      tpm2.New2B(keytype),
+				PrimaryHandle: tpm2.AuthHandle{
+					Handle: primaryKey.ObjectHandle,
+					Name:   tpm2.TPM2BName(primaryKey.Name),
+					Auth:   parentSession,
+				},
+				InPublic: tpm2.New2B(keytype),
 			}.Execute(rwr)
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create pimaryEK: %v", err)
@@ -289,8 +312,8 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		_, _ = flushContextCmd.Execute(rwr)
 	}()
 
+	// now initialize a session.  if pcrs are set, construct the TPMPCRSelections to validate against
 	var se tpmjwt.Session
-	var err error
 	if cfg.Pcrs != "" {
 
 		pcrMap := make(map[uint][]byte)
@@ -320,8 +343,11 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			},
 		}
 
+		// if the parent was not h2, we're assuming it was duplicated using
+		//  tpmcopy utility.  In this case the key is always bond with s apsecific policy
+		// see https://github.com/salrashid123/tpmcopy/tree/main#bound-key-policy
 		if cfg.UseEKParent != H2 {
-
+			// initialize a bound key policy to duplicate select + PCRs
 			se, err = tpmjwt.NewPCRAndDuplicateSelectSession(rwr, sel, tpm2.TPM2BDigest{Buffer: pcrHash}, []byte(cfg.Keypass), primaryKey.Name, encryptionSessionHandle)
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create authsession: %v", err)
@@ -331,6 +357,8 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			}
 			_, _ = flushContextCmd.Execute(rwr)
 		} else {
+
+			// if its h2, just iniialzie a regular PCR session
 			se, err = tpmjwt.NewPCRSession(rwr, sel, tpm2.TPM2BDigest{Buffer: pcrHash}, encryptionSessionHandle)
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm:  could get NewPCRSession: %v", err)
@@ -357,7 +385,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		return Token{}, fmt.Errorf("gcp-adc-tpm:  could not initialize Key: %v", err)
 	}
 
-	// now we're ready to sign
+	// if w'ere using mTLS worload federation
 
 	if cfg.UseMTLS {
 		ctx := context.Background()
@@ -366,6 +394,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			return Token{}, fmt.Errorf("gcp-adc-tpm: both ProjectNumber, ProviderID PoolID must be specified for mtls")
 		}
 
+		// supply the key, certificate and pool to get an token handle
 		ts, err := tpmmtls.TpmMTLSTokenSource(&tpmmtls.TpmMtlsTokenConfig{
 			TPMDevice:       cfg.TPMCloser,
 			Handle:          svcAccountKey,
@@ -376,12 +405,14 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)
 		}
 
+		// use the token handle to get a credential client
 		c, err := credentials.NewIamCredentialsClient(ctx, option.WithTokenSource(ts))
 		if err != nil {
 			return Token{}, fmt.Errorf("gcp-adc-tpm: error  creatubg IAM Client: %v", err)
 		}
 		defer c.Close()
 
+		// if w'ere asking for an id_token and mTLS worload federation, use the IAM API
 		if cfg.IdentityToken {
 
 			if cfg.ServiceAccountEmail == "" || cfg.Audience == "" {
@@ -398,6 +429,8 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: error  getting id_token: %v", err)
 			}
 			secondsDiff := 3600
+
+			// were done, return the id_token
 			return Token{
 				AccessToken: idresp.Token,
 				ExpiresIn:   int64(secondsDiff),
@@ -405,6 +438,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			}, nil
 		} else {
 
+			// otherwise get an access_token
 			if cfg.ServiceAccountEmail != "" {
 
 				ctx := context.Background()
@@ -433,7 +467,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			}
 
 			secondsDiff := int(time.Until(tok.Expiry).Seconds())
-
+			// we're done, return the access token
 			return Token{
 				AccessToken: tok.AccessToken,
 				ExpiresIn:   int64(secondsDiff),
@@ -442,6 +476,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		}
 	}
 
+	// now back to the point where we're not using mTLS but we need an id+token
 	if cfg.IdentityToken {
 		if cfg.Audience == "" {
 			return Token{}, fmt.Errorf("gcp-adc-tpm:  audience must be set if --identityToken is used")
@@ -454,6 +489,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 			TargetAudience string `json:"target_audience"`
 		}
 
+		// use the service account to sign a JWT
 		claims := &idTokenJWT{
 			RegisteredClaims: jwt.RegisteredClaims{
 				Issuer:    cfg.ServiceAccountEmail,
@@ -484,6 +520,8 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 		if err != nil {
 			return Token{}, fmt.Errorf("gcp-adc-tpm: Error signing %v", err)
 		}
+
+		// now exchange the JWT for an id_token with google's endpoint
 		client := &http.Client{}
 
 		data := url.Values{}
@@ -529,6 +567,8 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 
 		}
 		defaultExpSeconds := 3600
+
+		// now return the id_token
 		f := Token{AccessToken: t.AccessToken, TokenType: "Bearer", ExpiresIn: int64(defaultExpSeconds)}
 
 		return f, nil
@@ -538,6 +578,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 	var f Token
 	ctx := context.Background()
 
+	// we need either an access token without mTLS
 	config := &tpmjwt.TPMConfig{
 		TPMDevice:        cfg.TPMCloser,
 		Handle:           svcAccountKey,
@@ -552,6 +593,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 	tpmjwt.SigningMethodTPMRS256.Override()
 	jwt.MarshalSingleStringAsArray = false
 
+	// if we need a full oauth token, then we need to sign a jwt and exhange it with google
 	if cfg.UseOauthToken {
 
 		iat := time.Now()
@@ -613,6 +655,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (Token, error) {
 
 	} else {
 
+		// otherwise, just sign a JWT and return it (i.,e JWT AccessToken)
 		iat := time.Now()
 		exp := iat.Add(time.Duration(cfg.ExpireIn) * time.Second)
 

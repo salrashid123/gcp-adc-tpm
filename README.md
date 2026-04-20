@@ -20,8 +20,6 @@ These are described here: [oauth2 TPM TokenSource](https://github.com/salrashid1
 
 This specific demo here will use option (1) which is the easiest but ultimately, you just need a reference handle to the TPM which all three options can provide.
 
-> *NOTE* While this repo is a CLI,  you can acquire an embedded service account's token for use with a library as an [oauth2 TPM TokenSource](https://github.com/salrashid123/oauth2/blob/master/README.md#usage-tpmtokensource)
-
 #### Workload Identity Federation mTLS
 
 This repo also allow you to embed an mTLS certificate into a TPM for use with [GCP Workload Federation with x509 certificates](https://cloud.google.com/iam/docs/workload-identity-federation-with-x509-certificates).
