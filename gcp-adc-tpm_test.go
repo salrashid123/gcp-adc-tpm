@@ -441,7 +441,7 @@ func TestKeyFileCredentials(t *testing.T) {
 	persistentHandle := 0x81008002
 	_, _, closer, err := loadH2Key(rwr, uint(persistentHandle), filePath, svcEnvVar, tpm2.TPMAlgRSASSA)
 	require.NoError(t, err)
-	defer closer()
+	closer()
 
 	saEmail := os.Getenv("CICD_SA_EMAIL")
 
@@ -470,7 +470,7 @@ func TestOauth2Token(t *testing.T) {
 	persistentHandle := 0x81008003
 	_, _, closer, err := loadH2Key(rwr, uint(persistentHandle), filePath, svcEnvVar, tpm2.TPMAlgRSASSA)
 	require.NoError(t, err)
-	defer closer()
+	closer()
 
 	saEmail := os.Getenv("CICD_SA_EMAIL")
 
@@ -500,7 +500,7 @@ func TestIdToken(t *testing.T) {
 	persistentHandle := 0x81008004
 	_, _, closer, err := loadH2Key(rwr, uint(persistentHandle), filePath, svcEnvVar, tpm2.TPMAlgRSASSA)
 	require.NoError(t, err)
-	defer closer()
+	closer()
 
 	saEmail := os.Getenv("CICD_SA_EMAIL")
 
@@ -531,7 +531,7 @@ func TestMTLSAccessToken(t *testing.T) {
 	persistentHandle := 0x81008005
 	_, _, closer, err := loadH2Key(rwr, uint(persistentHandle), filePath, mtlsEnvVar, tpm2.TPMAlgRSAPSS)
 	require.NoError(t, err)
-	defer closer()
+	closer()
 
 	certPEMBlock := os.Getenv("CICD_MTLS_CERT_PEM")
 
@@ -576,7 +576,7 @@ func TestMTLSIDToken(t *testing.T) {
 	persistentHandle := 0x81008006
 	_, _, closer, err := loadH2Key(rwr, uint(persistentHandle), filePath, mtlsEnvVar, tpm2.TPMAlgRSAPSS)
 	require.NoError(t, err)
-	defer closer()
+	closer()
 
 	certPEMBlock := os.Getenv("CICD_MTLS_CERT_PEM")
 
@@ -623,7 +623,7 @@ func TestKeyFileEKRSACredentials(t *testing.T) {
 	persistentHandle := 0x81008007
 	_, _, closer, err := loadEKKey(rwr, tpm2.RSAEKTemplate, uint(persistentHandle), filePath, svcEnvVar, tpm2.TPMAlgRSASSA)
 	require.NoError(t, err)
-	defer closer()
+	closer()
 
 	saEmail := os.Getenv("CICD_SA_EMAIL")
 
@@ -651,7 +651,7 @@ func TestKeyFileEKECCCredentials(t *testing.T) {
 	persistentHandle := 0x81008008
 	_, _, closer, err := loadEKKey(rwr, tpm2.ECCEKTemplate, uint(persistentHandle), filePath, svcEnvVar, tpm2.TPMAlgRSASSA)
 	require.NoError(t, err)
-	defer closer()
+	closer()
 
 	saEmail := os.Getenv("CICD_SA_EMAIL")
 
