@@ -136,6 +136,11 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 	}()
 	encryptionSessionHandle = createEKRsp.ObjectHandle
 
+	ekoutPub, err := createEKRsp.OutPublic.Contents()
+	if err != nil {
+		return Token{}, fmt.Errorf("gcp-adc-tpm: error getting encryption name %v", err)
+	}
+
 	// if the encryptionName was specified as argument, compare it
 	if cfg.SessionEncryptionName != "" {
 		if cfg.SessionEncryptionName != hex.EncodeToString(createEKRsp.Name.Buffer) {
@@ -182,7 +187,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 					Auth:   tpm2.PasswordAuth([]byte(cfg.Parentpass)),
 				},
 				InPublic: tpm2.New2B(keytype),
-			}.Execute(rwr)
+			}.Execute(rwr, tpm2.HMAC(tpm2.TPMAlgSHA256, 16, tpm2.AESEncryption(128, tpm2.EncryptInOut), tpm2.Salted(createEKRsp.ObjectHandle, *ekoutPub)))
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create pimaryEK: %v", err)
 			}
@@ -210,7 +215,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 				},
 				PolicySession: parentSession.Handle(),
 				NonceTPM:      parentSession.NonceTPM(),
-			}.Execute(rwr)
+			}.Execute(rwr, tpm2.HMAC(tpm2.TPMAlgSHA256, 16, tpm2.AESEncryption(128, tpm2.EncryptInOut), tpm2.Salted(createEKRsp.ObjectHandle, *ekoutPub)))
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create policysecret: %v", err)
 			}
@@ -221,7 +226,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 			primaryKey, err = tpm2.CreatePrimary{
 				PrimaryHandle: key.Parent,
 				InPublic:      tpm2.New2B(keyfile.ECCSRK_H2_Template),
-			}.Execute(rwr)
+			}.Execute(rwr, tpm2.HMAC(tpm2.TPMAlgSHA256, 16, tpm2.AESEncryption(128, tpm2.EncryptInOut), tpm2.Salted(createEKRsp.ObjectHandle, *ekoutPub)))
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create primary (primary maybe RSAEK, not H2, try --useEKParent):   %v", err)
 			}
@@ -243,7 +248,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 			},
 			InPublic:  key.Pubkey,
 			InPrivate: key.Privkey,
-		}.Execute(rwr)
+		}.Execute(rwr, tpm2.HMAC(tpm2.TPMAlgSHA256, 16, tpm2.AESEncryption(128, tpm2.EncryptInOut), tpm2.Salted(createEKRsp.ObjectHandle, *ekoutPub)))
 		if err != nil {
 			return Token{}, fmt.Errorf("gcp-adc-tpm:can't load  rsaKey : %v", err)
 		}
@@ -271,7 +276,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 					Auth:   parentSession,
 				},
 				InPublic: tpm2.New2B(keytype),
-			}.Execute(rwr)
+			}.Execute(rwr, tpm2.HMAC(tpm2.TPMAlgSHA256, 16, tpm2.AESEncryption(128, tpm2.EncryptInOut), tpm2.Salted(createEKRsp.ObjectHandle, *ekoutPub)))
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create pimaryEK: %v", err)
 			}
@@ -297,7 +302,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 				},
 				PolicySession: parentSession.Handle(),
 				NonceTPM:      parentSession.NonceTPM(),
-			}.Execute(rwr)
+			}.Execute(rwr, tpm2.HMAC(tpm2.TPMAlgSHA256, 16, tpm2.AESEncryption(128, tpm2.EncryptInOut), tpm2.Salted(createEKRsp.ObjectHandle, *ekoutPub)))
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: can't create policysecret: %v", err)
 			}
@@ -355,7 +360,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 			flushContextCmd := tpm2.FlushContext{
 				FlushHandle: primaryKey.ObjectHandle,
 			}
-			_, _ = flushContextCmd.Execute(rwr)
+			_, _ = flushContextCmd.Execute(rwr, tpm2.HMAC(tpm2.TPMAlgSHA256, 16, tpm2.AESEncryption(128, tpm2.EncryptInOut), tpm2.Salted(createEKRsp.ObjectHandle, *ekoutPub)))
 		} else {
 
 			// if its h2, just iniialzie a regular PCR session
@@ -375,7 +380,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 			flushContextCmd := tpm2.FlushContext{
 				FlushHandle: primaryKey.ObjectHandle,
 			}
-			_, _ = flushContextCmd.Execute(rwr)
+			_, _ = flushContextCmd.Execute(rwr, tpm2.HMAC(tpm2.TPMAlgSHA256, 16, tpm2.AESEncryption(128, tpm2.EncryptInOut), tpm2.Salted(createEKRsp.ObjectHandle, *ekoutPub)))
 		} else {
 			se, err = tpmjwt.NewPasswordAuthSession(rwr, []byte(keyPasswordAuth), encryptionSessionHandle)
 		}
@@ -396,10 +401,11 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 
 		// supply the key, certificate and pool to get an token handle
 		ts, err := tpmmtls.TpmMTLSTokenSource(&tpmmtls.TpmMtlsTokenConfig{
-			TPMDevice:       cfg.TPMCloser,
-			Handle:          svcAccountKey,
-			Audience:        fmt.Sprintf("//iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/providers/%s", cfg.ProjectNumber, cfg.PoolID, cfg.ProviderID),
-			X509Certificate: cfg.Certificate,
+			TPMDevice:        cfg.TPMCloser,
+			Handle:           svcAccountKey,
+			Audience:         fmt.Sprintf("//iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s/providers/%s", cfg.ProjectNumber, cfg.PoolID, cfg.ProviderID),
+			X509Certificate:  cfg.Certificate,
+			EncryptionHandle: createEKRsp.ObjectHandle,
 		})
 		if err != nil {
 			return Token{}, fmt.Errorf("gcp-adc-tpm: error getting token %v", err)
