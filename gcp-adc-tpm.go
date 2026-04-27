@@ -156,6 +156,7 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 
 	var primaryKey *tpm2.CreatePrimaryResponse
 	var parentSession tpm2.Session
+	var load_session_cleanup func() error
 
 	// if a keyfile was specfified
 	if cfg.CredentialFile != "" {
@@ -200,7 +201,6 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 			}()
 
 			// load it
-			var load_session_cleanup func() error
 			parentSession, load_session_cleanup, err = tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16)
 			if err != nil {
 				return Token{}, fmt.Errorf("gcp-adc-tpm: can't load policysession : %v", err)
@@ -251,6 +251,9 @@ func NewGCPTPMCredential(cfg *GCPTPMConfig) (t Token, e error) {
 		}.Execute(rwr, tpm2.HMAC(tpm2.TPMAlgSHA256, 16, tpm2.AESEncryption(128, tpm2.EncryptInOut), tpm2.Salted(createEKRsp.ObjectHandle, *ekoutPub)))
 		if err != nil {
 			return Token{}, fmt.Errorf("gcp-adc-tpm:can't load  rsaKey : %v", err)
+		}
+		if load_session_cleanup != nil {
+			load_session_cleanup()
 		}
 		svcAccountKey = svcAccountKeyResponse.ObjectHandle
 	} else {
